@@ -1,0 +1,6 @@
+# Makes the directory a package
+from analysis.resume_parser import parse_resume
+from analysis.job_analyzer import analyze_resume_match, generate_interview_tips
+from analysis.industry_analyzer import analyze_industry_fit
+from analysis.report_generator import generate_comprehensive_report, generate_cover_letter
+from analysis.trend_analyzer import store_analysis_history, generate_trend_charts
