@@ -4,10 +4,17 @@ import streamlit as st
 import anthropic
 from utils.error_tracker import error_tracker
 
-def call_anthropic_api_with_timeout(client, prompt, model="claude-3-5-sonnet-20240620", 
+#def call_anthropic_api_with_timeout(client, prompt, model="claude-3-5-sonnet-20240620", 
+#                                   max_tokens=2000, temperature=0.0, system="", 
+#                                   timeout=60, retries=2):
+#    """
+# try the new model: claude-3-7-sonnet-20250219
+def call_anthropic_api_with_timeout(client, prompt, model="claude-3-7-sonnet-20250219", 
                                    max_tokens=2000, temperature=0.0, system="", 
                                    timeout=60, retries=2):
     """
+
+
     Makes an API call to Anthropic with timeout handling and retries.
     """
     start_time = time.time()
