@@ -3,6 +3,81 @@ import json
 from utils.error_tracker import error_tracker
 from utils.api_client import call_anthropic_api_with_timeout
 
+def generate_tailored_resume(client, resume_data, job_description, analysis):
+    """
+    Generates a tailored version of the resume optimized for the specific job description.
+    """
+    if not resume_data or not job_description or not analysis:
+        return "Unable to generate tailored resume due to missing data."
+    
+    # Extract key information to customize the resume
+    candidate_name = resume_data.get('name', 'Candidate')
+    strengths = analysis.get('strengths', [])
+    keywords = analysis.get('keyword_analysis', [])
+    
+    # Convert data to JSON for the prompt
+    try:
+        resume_json = json.dumps(resume_data, indent=2)
+        analysis_json = json.dumps(analysis, indent=2)
+    except Exception as e:
+        error_tracker.add_error("json_error", "Error preparing data for tailored resume", False, str(e))
+        return "Error generating tailored resume."
+    
+    prompt = f"""
+    You are an expert resume writer. Based on this candidate's resume and the job description analysis, 
+    create a tailored version of their resume that highlights relevant qualifications and 
+    addresses the gaps identified in the analysis.
+
+    Job Description:
+    ---
+    {job_description}
+    ---
+
+    Original Resume Data (JSON):
+    ---
+    {resume_json}
+    ---
+    
+    Resume Analysis:
+    ---
+    {analysis_json}
+    ---
+
+    Create a thoroughly tailored version of this resume that:
+
+    1. Maintains the candidate's accurate work history, education, and skills
+    2. Reorganizes and rephrases content to emphasize experiences relevant to this specific job
+    3. Incorporates the missing keywords from the job description naturally
+    4. Enhances sections that align with the identified strengths
+    5. Addresses the improvement areas and experience gaps where possible
+    6. Uses industry-specific terminology that's relevant to the role
+    7. Follows best practices for ATS optimization
+    8. Keeps a professional, clean format
+    9. Uses bullet points effectively to highlight achievements and responsibilities
+    10. Quantifies accomplishments where possible
+
+    Format the resume in a clean, modern style with clear section headings. 
+    Use British English spelling and grammar conventions.
+    The result should be a complete, ready-to-use resume in Markdown format.
+    """
+
+    # Use enhanced API call with timeout
+    success, response_text = call_anthropic_api_with_timeout(
+        client=client,
+        prompt=prompt,
+        max_tokens=3000,
+        temperature=0.3,
+        system="You are a professional resume writer specializing in creating tailored, ATS-optimized resumes. Create a tailored resume that addresses the specific job requirements while maintaining accuracy about the candidate's background.",
+        timeout=60,
+        retries=1
+    )
+    
+    if not success:
+        return "Unable to generate tailored resume. Please try again later."
+    
+    # Return the tailored resume text directly
+    return response_text
+
 def generate_comprehensive_report(resume_data, job_description, analysis, industry_analysis):
     """
     Generates a detailed PDF-ready report with all analyses.
