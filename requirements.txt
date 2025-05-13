@@ -1,0 +1,13 @@
+streamlit>=1.27.0
+anthropic>=0.8.0
+pandas>=1.5.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+altair>=5.0.0
+PyPDF2>=3.0.0
+python-docx>=0.8.11
+requests>=2.28.0
+# Remove concurrent-futures as it's included in Python standard library
+# Additional dependencies for enhanced functionality
+plotly>=5.14.0
+watchdog>=2.3.0
