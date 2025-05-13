@@ -42,7 +42,7 @@ if not client:
 # Initialize session state more robustly
 for key in ['job_description', 'resume_file_name', 'resume_text', 'resume_data', 
            'analysis_results', 'interview_tips', 'processing_started', 'processing_completed',
-           'industry_analysis', 'comprehensive_report']:
+           'industry_analysis', 'comprehensive_report', 'cover_letter', 'tailored_resume']:
     if key not in st.session_state:
         st.session_state[key] = None
         
@@ -285,16 +285,11 @@ if st.session_state['analysis_results'] is not None:
                 st.success("Interview tips ready! Check the Detailed Analysis tab.")
         
         with qa_col3:
-            if st.button("Download Full Report", use_container_width=True):
-                if st.session_state.get('comprehensive_report'):
-                    report_text = st.session_state['comprehensive_report']
-                    st.download_button(
-                        label="Download Report as Markdown",
-                        data=report_text,
-                        file_name="resume_analysis_report.md",
-                        mime="text/markdown",
-                        use_container_width=True
-                    )
+            if st.button("Tailor Resume", use_container_width=True):
+                with st.spinner("Creating your tailored resume..."):
+                    tailored_resume = generate_tailored_resume(client, resume_data, job_description, analysis_results)
+                    st.session_state['tailored_resume'] = tailored_resume
+                    st.success("Tailored resume created! Check the Full Report tab.")
     
     # DETAILS TAB
     with details_tab:
@@ -499,6 +494,27 @@ if st.session_state['analysis_results'] is not None:
                     cover_letter = generate_cover_letter(client, resume_data, job_description, analysis_results)
                     st.session_state['cover_letter'] = cover_letter
                     st.rerun()
+
+        # Tailored resume section
+        if 'tailored_resume' in st.session_state and st.session_state['tailored_resume']:
+            with st.expander("Your Tailored Resume", expanded=True):
+                st.markdown(st.session_state['tailored_resume'])
+                
+                # Add option to download tailored resume
+                tailored_resume_text = st.session_state['tailored_resume']
+                st.download_button(
+                    label="Download Tailored Resume",
+                    data=tailored_resume_text,
+                    file_name="tailored_resume.md",
+                    mime="text/markdown"
+                )
+        else:
+            # Button to generate tailored resume
+            if st.button("Generate Tailored Resume"):
+                with st.spinner("Creating your tailored resume..."):
+                    tailored_resume = generate_tailored_resume(client, resume_data, job_description, analysis_results)
+                    st.session_state['tailored_resume'] = tailored_resume
+                    st.rerun()
         
         # Full report
         if comprehensive_report:
@@ -531,17 +547,17 @@ if st.session_state['analysis_results'] is not None:
             """)
 
 # Footer
-st.markdown("---")
 st.markdown("### How to Use This Analysis")
 st.markdown("""
 1. **Review your match score** to understand your overall fit for the position
 2. **Focus on improving areas** identified in the analysis
 3. **Add missing keywords** to your resume for better ATS matching
 4. **Use industry insights** to better tailor your application to the specific field
-5. **Prepare for interviews** using the provided tips
-6. **Use the generated cover letter** to create a tailored application highlighting your strengths
-7. **Track your progress** across multiple job applications with the trend analysis
-8. **Download the full report** for your records or to discuss with a career counselor
+5. **Generate a tailored resume** that's optimized for this specific job application
+6. **Prepare for interviews** using the provided tips
+7. **Use the generated cover letter** to create a tailored application highlighting your strengths
+8. **Track your progress** across multiple job applications with the trend analysis
+9. **Download the full report** for your records or to discuss with a career counselor
 """)
 
 st.markdown("---")
