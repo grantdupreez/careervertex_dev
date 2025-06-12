@@ -1573,6 +1573,29 @@ def parse_cv(client, cv_text, candidate_name):
         if not isinstance(parsed_data, dict):
             error_tracker.add_error("json_error", f"Parsing returned {type(parsed_data).__name__} instead of a dictionary.", True)
             return fallback_structure
+            
+        # Validate and ensure essential fields exist
+        if 'original_filename' not in parsed_data:
+            parsed_data['original_filename'] = candidate_name
+        if 'name' not in parsed_data or not parsed_data['name']:
+            parsed_data['name'] = candidate_name
+        
+        # Ensure proper structure for nested objects
+        if 'contact_info' not in parsed_data or not isinstance(parsed_data['contact_info'], dict):
+            parsed_data['contact_info'] = {"email": None, "phone": None}
+        if 'skills' not in parsed_data or not isinstance(parsed_data['skills'], dict):
+            parsed_data['skills'] = {"technical": [], "soft": []}
+            
+        # Ensure arrays for collections
+        for field in ['education', 'work_experience', 'certifications']:
+            if field not in parsed_data or not isinstance(parsed_data[field], list):
+                parsed_data[field] = []
+                
+        return parsed_data
+        
+    except json.JSONDecodeError as json_e:
+        error_tracker.add_error("json_error", f"Failed to decode JSON response: {json_e}", True)
+        return fallback_structure
 
 def analyze_cv_match(client, cv_data, job_description):
     """
@@ -2245,7 +2268,236 @@ def show_admin_page():
                 # User actions
                 actions_col1, actions_col2, actions_col3 = st.columns(3)
                 
-                with actions_col1:
+                with col1:
+                    st.markdown(f"### {analysis['job_title']}")
+                    if analysis.get('company'):
+                        st.markdown(f"**Company:** {analysis['company']}")
+                    st.markdown(f"**CV:** {analysis['cv_name']}")
+                    
+                with col2:
+                    match_score = analysis['match_score']
+                    if match_score >= 80:
+                        color = "green"
+                    elif match_score >= 60:
+                        color = "orange"
+                    else:
+                        color = "red"
+                    st.markdown(f"**Match Score:** <span style='color: {color}; font-weight: bold;'>{match_score}%</span>", unsafe_allow_html=True)
+                
+                with col3:
+                    if st.button("View Details", key=f"view_{analysis['analysis_id']}"):
+                        st.session_state['current_analysis_id'] = analysis['analysis_id']
+                        st.session_state['show_analysis_tab'] = True
+                        st.rerun()
+                
+                # Analysis date
+                st.markdown(f"*Analysed on {analysis['created_at'].strftime('%d %b %Y at %H:%M')}*")
+                
+                st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.info("You haven't performed any analyses yet. Use the 'Analyse New Job' tab to get started!")
+    
+    # MY ACCOUNT TAB
+    with dashboard_tabs[3]:
+        st.header("My Account")
+        
+        if user_data:
+            # Account information
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.subheader("Account Information")
+            
+            # Display user info
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown(f"**Full Name:** {user_data.get('full_name', 'Not provided')}")
+                st.markdown(f"**Email:** {user_data.get('email', 'Not provided')}")
+                st.markdown(f"**Member Since:** {user_data.get('created_at', 'Unknown').strftime('%B %Y') if user_data.get('created_at') else 'Unknown'}")
+            
+            with col2:
+                # Subscription info
+                if user_data.get('subscription_status') == 'active' and user_data.get('subscription_end') and user_data.get('subscription_end') > datetime.now():
+                    days_left = (user_data['subscription_end'] - datetime.now()).days
+                    st.success(f"✅ Active Subscription ({days_left} days remaining)")
+                    st.markdown(f"**Subscription End:** {user_data['subscription_end'].strftime('%d %B %Y')}")
+                else:
+                    st.error("❌ No Active Subscription")
+                    
+                    if st.button("Subscribe Now", key="account_subscribe"):
+                        try:
+                            checkout_session = create_stripe_checkout_session(
+                                user_data['user_id'],
+                                user_data['email']
+                            )
+                            
+                            if checkout_session:
+                                st.session_state['checkout_url'] = checkout_session.url
+                                st.success("Redirecting to payment page...")
+                                st.markdown(f'<meta http-equiv="refresh" content="2;URL=\'{checkout_session.url}\'">', unsafe_allow_html=True)
+                        except Exception as e:
+                            error_tracker.add_error("payment_error", "Failed to create checkout session", True, str(e))
+                            st.error("Failed to create checkout session. Please try again.")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Usage statistics
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.subheader("Usage Statistics")
+            
+            # Get user's usage stats
+            user_analyses_count = len(get_user_analyses(user_data['user_id']))
+            user_cvs_count = len(get_user_cvs(user_data['user_id']))
+            
+            # Token usage
+            token_usage = db_manager.execute_query(
+                """
+                SELECT SUM(tokens_used) as total_tokens, COUNT(*) as request_count
+                FROM token_usage
+                WHERE user_id = %s
+                """,
+                (user_data['user_id'],)
+            )
+            
+            # Display stats
+            stats_col1, stats_col2, stats_col3 = st.columns(3)
+            
+            with stats_col1:
+                st.metric("CVs Uploaded", user_cvs_count)
+            
+            with stats_col2:
+                st.metric("Analyses Performed", user_analyses_count)
+            
+            with stats_col3:
+                total_tokens = token_usage[0]['total_tokens'] if token_usage and token_usage[0]['total_tokens'] else 0
+                st.metric("AI Tokens Used", f"{total_tokens:,}")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Account actions
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.subheader("Account Actions")
+            
+            # Change password (simplified - in production you'd want email verification)
+            with st.expander("Change Password"):
+                with st.form("change_password_form"):
+                    current_password = st.text_input("Current Password", type="password")
+                    new_password = st.text_input("New Password", type="password")
+                    confirm_new_password = st.text_input("Confirm New Password", type="password")
+                    
+                    if st.form_submit_button("Change Password"):
+                        if not current_password or not new_password or not confirm_new_password:
+                            st.error("Please fill in all fields.")
+                        elif new_password != confirm_new_password:
+                            st.error("New passwords do not match.")
+                        else:
+                            # Verify current password
+                            if bcrypt.checkpw(current_password.encode('utf-8'), user_data['password_hash'].encode('utf-8')):
+                                # Hash new password
+                                new_password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                                
+                                # Update password in database
+                                success = db_manager.execute_query(
+                                    "UPDATE users SET password_hash = %s WHERE user_id = %s",
+                                    (new_password_hash, user_data['user_id']),
+                                    fetch=False
+                                )
+                                
+                                if success:
+                                    st.success("Password changed successfully!")
+                                else:
+                                    st.error("Failed to change password. Please try again.")
+                            else:
+                                st.error("Current password is incorrect.")
+            
+            # Export data
+            with st.expander("Export Your Data"):
+                st.markdown("Download all your CareerVertex data including CVs and analyses.")
+                
+                if st.button("Export Data"):
+                    # Collect all user data
+                    export_data = {
+                        "user_info": {
+                            "email": user_data['email'],
+                            "full_name": user_data.get('full_name'),
+                            "member_since": user_data.get('created_at').isoformat() if user_data.get('created_at') else None
+                        },
+                        "cvs": get_user_cvs(user_data['user_id']),
+                        "analyses": get_user_analyses(user_data['user_id'])
+                    }
+                    
+                    # Convert to JSON
+                    export_json = json.dumps(export_data, indent=2, default=str)
+                    
+                    # Provide download
+                    st.download_button(
+                        label="Download Data (JSON)",
+                        data=export_json,
+                        file_name=f"careervertex_data_{user_data['email']}.json",
+                        mime="application/json"
+                    )
+            
+            # Delete account
+            with st.expander("⚠️ Delete Account"):
+                st.warning("This action cannot be undone. All your data will be permanently deleted.")
+                
+                delete_confirmation = st.text_input("Type 'DELETE' to confirm account deletion")
+                
+                if st.button("Delete My Account", type="primary") and delete_confirmation == "DELETE":
+                    # Delete all user data
+                    user_id = user_data['user_id']
+                    
+                    # Delete in reverse order of foreign key dependencies
+                    db_manager.execute_query("DELETE FROM token_usage WHERE user_id = %s", (user_id,), fetch=False)
+                    db_manager.execute_query("DELETE FROM analyses WHERE user_id = %s", (user_id,), fetch=False)
+                    db_manager.execute_query("DELETE FROM job_descriptions WHERE user_id = %s", (user_id,), fetch=False)
+                    db_manager.execute_query("DELETE FROM cvs WHERE user_id = %s", (user_id,), fetch=False)
+                    db_manager.execute_query("DELETE FROM payments WHERE user_id = %s", (user_id,), fetch=False)
+                    db_manager.execute_query("DELETE FROM users WHERE user_id = %s", (user_id,), fetch=False)
+                    
+                    # Logout user
+                    auth_manager.logout_user()
+                    st.success("Account deleted successfully. You have been logged out.")
+                    st.rerun()
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+
+# === MAIN APPLICATION ===
+def main():
+    st.write("Application starting...")  # Debug line
+    
+    # Check for Stripe session_id in URL params for payment completion
+    query_params = st.query_params
+    if "success" in query_params and "session_id" in query_params:
+        session_id = query_params["session_id"]
+        
+        # Process the successful payment
+        if handle_successful_payment(session_id):
+            st.success("Subscription activated successfully!")
+            
+            # Clear URL parameters
+            st.query_params.clear()
+    
+    # Check if we're in admin mode
+    admin_mode = False
+    if "admin" in st.query_params:
+        # Admin authentication
+        if auth_manager.check_admin_password():
+            admin_mode = True
+    
+    if admin_mode:
+        # Display admin dashboard
+        show_admin_page()
+    else:
+        # Check if user is logged in
+        if 'user_id' in st.session_state:
+            # Show user dashboard
+            show_dashboard()
+        else:
+            # Show login page
+            show_login_page()
+
+if __name__ == "__main__":
+    main() actions_col1:
                     if st.button("Reset Password"):
                         # Generate a temporary password
                         temp_password = str(uuid.uuid4())[:8]
@@ -3138,228 +3390,3 @@ def show_dashboard():
                 st.markdown('</div>', unsafe_allow_html=True)
         else:
             st.info("You haven't performed any analyses yet. Use the 'Analyse New Job' tab to get started!")
-    
-    # MY ACCOUNT TAB
-    with dashboard_tabs[3]:
-        st.header("My Account")
-        
-        if user_data:
-            # Account information
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.subheader("Account Information")
-            
-            # Display user info
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown(f"**Full Name:** {user_data.get('full_name', 'Not provided')}")
-                st.markdown(f"**Email:** {user_data.get('email', 'Not provided')}")
-                st.markdown(f"**Member Since:** {user_data.get('created_at', 'Unknown').strftime('%B %Y') if user_data.get('created_at') else 'Unknown'}")
-            
-            with col2:
-                # Subscription info
-                if user_data.get('subscription_status') == 'active' and user_data.get('subscription_end') and user_data.get('subscription_end') > datetime.now():
-                    days_left = (user_data['subscription_end'] - datetime.now()).days
-                    st.success(f"✅ Active Subscription ({days_left} days remaining)")
-                    st.markdown(f"**Subscription End:** {user_data['subscription_end'].strftime('%d %B %Y')}")
-                else:
-                    st.error("❌ No Active Subscription")
-                    
-                    if st.button("Subscribe Now", key="account_subscribe"):
-                        try:
-                            checkout_session = create_stripe_checkout_session(
-                                user_data['user_id'],
-                                user_data['email']
-                            )
-                            
-                            if checkout_session:
-                                st.session_state['checkout_url'] = checkout_session.url
-                                st.success("Redirecting to payment page...")
-                                st.markdown(f'<meta http-equiv="refresh" content="2;URL=\'{checkout_session.url}\'">', unsafe_allow_html=True)
-                        except Exception as e:
-                            error_tracker.add_error("payment_error", "Failed to create checkout session", True, str(e))
-                            st.error("Failed to create checkout session. Please try again.")
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Usage statistics
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.subheader("Usage Statistics")
-            
-            # Get user's usage stats
-            user_analyses_count = len(get_user_analyses(user_data['user_id']))
-            user_cvs_count = len(get_user_cvs(user_data['user_id']))
-            
-            # Token usage
-            token_usage = db_manager.execute_query(
-                """
-                SELECT SUM(tokens_used) as total_tokens, COUNT(*) as request_count
-                FROM token_usage
-                WHERE user_id = %s
-                """,
-                (user_data['user_id'],)
-            )
-            
-            # Display stats
-            stats_col1, stats_col2, stats_col3 = st.columns(3)
-            
-            with stats_col1:
-                st.metric("CVs Uploaded", user_cvs_count)
-            
-            with stats_col2:
-                st.metric("Analyses Performed", user_analyses_count)
-            
-            with stats_col3:
-                total_tokens = token_usage[0]['total_tokens'] if token_usage and token_usage[0]['total_tokens'] else 0
-                st.metric("AI Tokens Used", f"{total_tokens:,}")
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Account actions
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.subheader("Account Actions")
-            
-            # Change password (simplified - in production you'd want email verification)
-            with st.expander("Change Password"):
-                with st.form("change_password_form"):
-                    current_password = st.text_input("Current Password", type="password")
-                    new_password = st.text_input("New Password", type="password")
-                    confirm_new_password = st.text_input("Confirm New Password", type="password")
-                    
-                    if st.form_submit_button("Change Password"):
-                        if not current_password or not new_password or not confirm_new_password:
-                            st.error("Please fill in all fields.")
-                        elif new_password != confirm_new_password:
-                            st.error("New passwords do not match.")
-                        else:
-                            # Verify current password
-                            if bcrypt.checkpw(current_password.encode('utf-8'), user_data['password_hash'].encode('utf-8')):
-                                # Hash new password
-                                new_password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                                
-                                # Update password in database
-                                success = db_manager.execute_query(
-                                    "UPDATE users SET password_hash = %s WHERE user_id = %s",
-                                    (new_password_hash, user_data['user_id']),
-                                    fetch=False
-                                )
-                                
-                                if success:
-                                    st.success("Password changed successfully!")
-                                else:
-                                    st.error("Failed to change password. Please try again.")
-                            else:
-                                st.error("Current password is incorrect.")
-            
-            # Export data
-            with st.expander("Export Your Data"):
-                st.markdown("Download all your CareerVertex data including CVs and analyses.")
-                
-                if st.button("Export Data"):
-                    # Collect all user data
-                    export_data = {
-                        "user_info": {
-                            "email": user_data['email'],
-                            "full_name": user_data.get('full_name'),
-                            "member_since": user_data.get('created_at').isoformat() if user_data.get('created_at') else None
-                        },
-                        "cvs": get_user_cvs(user_data['user_id']),
-                        "analyses": get_user_analyses(user_data['user_id'])
-                    }
-                    
-                    # Convert to JSON
-                    export_json = json.dumps(export_data, indent=2, default=str)
-                    
-                    # Provide download
-                    st.download_button(
-                        label="Download Data (JSON)",
-                        data=export_json,
-                        file_name=f"careervertex_data_{user_data['email']}.json",
-                        mime="application/json"
-                    )
-            
-            # Delete account
-            with st.expander("⚠️ Delete Account"):
-                st.warning("This action cannot be undone. All your data will be permanently deleted.")
-                
-                delete_confirmation = st.text_input("Type 'DELETE' to confirm account deletion")
-                
-                if st.button("Delete My Account", type="primary") and delete_confirmation == "DELETE":
-                    # Delete all user data
-                    user_id = user_data['user_id']
-                    
-                    # Delete in reverse order of foreign key dependencies
-                    db_manager.execute_query("DELETE FROM token_usage WHERE user_id = %s", (user_id,), fetch=False)
-                    db_manager.execute_query("DELETE FROM analyses WHERE user_id = %s", (user_id,), fetch=False)
-                    db_manager.execute_query("DELETE FROM job_descriptions WHERE user_id = %s", (user_id,), fetch=False)
-                    db_manager.execute_query("DELETE FROM cvs WHERE user_id = %s", (user_id,), fetch=False)
-                    db_manager.execute_query("DELETE FROM payments WHERE user_id = %s", (user_id,), fetch=False)
-                    db_manager.execute_query("DELETE FROM users WHERE user_id = %s", (user_id,), fetch=False)
-                    
-                    # Logout user
-                    auth_manager.logout_user()
-                    st.success("Account deleted successfully. You have been logged out.")
-                    st.rerun()
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-
-# === MAIN APPLICATION ===
-def main():
-    st.write("Application starting...")  # Debug line
-    
-    # Check for Stripe session_id in URL params for payment completion
-    query_params = st.query_params
-    if "success" in query_params and "session_id" in query_params:
-        session_id = query_params["session_id"]
-        
-        # Process the successful payment
-        if handle_successful_payment(session_id):
-            st.success("Subscription activated successfully!")
-            
-            # Clear URL parameters
-            st.query_params.clear()
-    
-    # Check if we're in admin mode
-    admin_mode = False
-    if "admin" in st.query_params:
-        # Admin authentication
-        if auth_manager.check_admin_password():
-            admin_mode = True
-    
-    if admin_mode:
-        # Display admin dashboard
-        show_admin_page()
-    else:
-        # Check if user is logged in
-        if 'user_id' in st.session_state:
-            # Show user dashboard
-            show_dashboard()
-        else:
-            # Show login page
-            show_login_page()
-
-if __name__ == "__main__":
-    main()
-            
-        # Validate and ensure essential fields exist
-        if 'original_filename' not in parsed_data:
-            parsed_data['original_filename'] = candidate_name
-        if 'name' not in parsed_data or not parsed_data['name']:
-            parsed_data['name'] = candidate_name
-        
-        # Ensure proper structure for nested objects
-        if 'contact_info' not in parsed_data or not isinstance(parsed_data['contact_info'], dict):
-            parsed_data['contact_info'] = {"email": None, "phone": None}
-        if 'skills' not in parsed_data or not isinstance(parsed_data['skills'], dict):
-            parsed_data['skills'] = {"technical": [], "soft": []}
-            
-        # Ensure arrays for collections
-        for field in ['education', 'work_experience', 'certifications']:
-            if field not in parsed_data or not isinstance(parsed_data[field], list):
-                parsed_data[field] = []
-                
-        return parsed_data
-        
-    except json.JSONDecodeError as json_e:
-        error_tracker.add_error("json_error", f"Failed to decode JSON response: {json_e}", True)
-        return fallback_structure
