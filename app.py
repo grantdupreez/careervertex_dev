@@ -1,40 +1,4 @@
-# === MAIN APPLICATION ===
-def main():
-    st.write("Application starting...")  # Debug line
-    
-    # Check for Stripe session_id in URL params for payment completion
-    query_params = st.query_params
-    if "success" in query_params and "session_id" in query_params:
-        session_id = query_params["session_id"]
-        
-        # Process the successful payment
-        if handle_successful_payment(session_id):
-            st.success("Subscription activated successfully!")
-            
-            # Clear URL parameters
-            st.query_params.clear()
-    
-    # Check if we're in admin mode
-    admin_mode = False
-    if "admin" in st.query_params:
-        # Admin authentication
-        if auth_manager.check_admin_password():
-            admin_mode = True
-    
-    if admin_mode:
-        # Display admin dashboard
-        show_admin_page()
-    else:
-        # Check if user is logged in
-        if 'user_id' in st.session_state:
-            # Show user dashboard
-            show_dashboard()
-        else:
-            # Show login page
-            show_login_page()
-
-if __name__ == "__main__":
-    main()import streamlit as st
+import streamlit as st
 import pandas as pd
 import altair as alt
 import numpy as np
@@ -3097,3 +3061,41 @@ def show_dashboard():
                                     else:
                                         ind_color = "red"
                                         ind_text = "Low Industry Fit"
+
+# === MAIN APPLICATION ===
+def main():
+    st.write("Application starting...")  # Debug line
+    
+    # Check for Stripe session_id in URL params for payment completion
+    query_params = st.query_params
+    if "success" in query_params and "session_id" in query_params:
+        session_id = query_params["session_id"]
+        
+        # Process the successful payment
+        if handle_successful_payment(session_id):
+            st.success("Subscription activated successfully!")
+            
+            # Clear URL parameters
+            st.query_params.clear()
+    
+    # Check if we're in admin mode
+    admin_mode = False
+    if "admin" in st.query_params:
+        # Admin authentication
+        if auth_manager.check_admin_password():
+            admin_mode = True
+    
+    if admin_mode:
+        # Display admin dashboard
+        show_admin_page()
+    else:
+        # Check if user is logged in
+        if 'user_id' in st.session_state:
+            # Show user dashboard
+            show_dashboard()
+        else:
+            # Show login page
+            show_login_page()
+
+if __name__ == "__main__":
+    main()
