@@ -310,7 +310,7 @@ class DatabaseManager:
                 host=st.secrets["DB_HOST"],
                 port=st.secrets["DB_PORT"],
                 # Uncomment if using SSL (often required for Google Cloud SQL)
-                # sslmode='require',
+                sslmode='require',
                 # Add these if you're using SSL certificates
                 # sslrootcert=st.secrets.get("DB_SSL_ROOT_CERT"),
                 # sslcert=st.secrets.get("DB_SSL_CERT"),
