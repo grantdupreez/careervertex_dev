@@ -1,4 +1,40 @@
-import streamlit as st
+# === MAIN APPLICATION ===
+def main():
+    st.write("Application starting...")  # Debug line
+    
+    # Check for Stripe session_id in URL params for payment completion
+    query_params = st.query_params
+    if "success" in query_params and "session_id" in query_params:
+        session_id = query_params["session_id"]
+        
+        # Process the successful payment
+        if handle_successful_payment(session_id):
+            st.success("Subscription activated successfully!")
+            
+            # Clear URL parameters
+            st.query_params.clear()
+    
+    # Check if we're in admin mode
+    admin_mode = False
+    if "admin" in st.query_params:
+        # Admin authentication
+        if auth_manager.check_admin_password():
+            admin_mode = True
+    
+    if admin_mode:
+        # Display admin dashboard
+        show_admin_page()
+    else:
+        # Check if user is logged in
+        if 'user_id' in st.session_state:
+            # Show user dashboard
+            show_dashboard()
+        else:
+            # Show login page
+            show_login_page()
+
+if __name__ == "__main__":
+    main()import streamlit as st
 import pandas as pd
 import altair as alt
 import numpy as np
@@ -290,17 +326,35 @@ class DatabaseManager:
         
         # Initialize connection pool
         try:
+            # Check for required secrets
+            required_db_secrets = ["DB_NAME", "DB_USER", "DB_PASSWORD", "DB_HOST", "DB_PORT"]
+            for secret in required_db_secrets:
+                if secret not in st.secrets:
+                    st.error(f"Missing required database secret: {secret}")
+                    print(f"Missing required database secret: {secret}")
+                    return
+
+            # Connect to Google Cloud SQL PostgreSQL
             self.conn_pool = psycopg2.pool.SimpleConnectionPool(
                 1, 10,
                 dbname=st.secrets["DB_NAME"],
                 user=st.secrets["DB_USER"],
                 password=st.secrets["DB_PASSWORD"],
                 host=st.secrets["DB_HOST"],
-                port=st.secrets["DB_PORT"]
+                port=st.secrets["DB_PORT"],
+                # Uncomment if using SSL (often required for Google Cloud SQL)
+                # sslmode='require',
+                # Add these if you're using SSL certificates
+                # sslrootcert=st.secrets.get("DB_SSL_ROOT_CERT"),
+                # sslcert=st.secrets.get("DB_SSL_CERT"),
+                # sslkey=st.secrets.get("DB_SSL_KEY"),
             )
-            print("Database connection pool initialized")
+            print("Database connection pool initialized to Google Cloud SQL")
+            st.success("✅ Connected to Google Cloud SQL database")
         except Exception as e:
             error_tracker.add_error("db_error", "Failed to initialize database connection pool", True, str(e))
+            st.error(f"❌ Database connection failed: {str(e)}")
+            print(f"Database connection error: {str(e)}")
             self.conn_pool = None
     
     def get_connection(self):
