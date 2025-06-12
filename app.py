@@ -22,7 +22,6 @@ import anthropic
 import stripe
 import psycopg2
 from psycopg2.extras import Json, DictCursor
-from psycopg2 import pool
 import bcrypt
 
 # === APP CONFIGURATION ===
@@ -50,6 +49,12 @@ custom_css = """
     --score-high: #28a745;
     --score-mid: #fd7e14;
     --score-low: #dc3545;
+    --error-bg: #f8d7da;
+    --error-border: #f5c6cb;
+    --error-text: #721c24;
+    --warning-bg: #fff3cd;
+    --warning-border: #ffeaa7;
+    --warning-text: #856404;
 }
 
 .stApp {
@@ -124,6 +129,44 @@ div.trend-card {
 .improvement-item {
     color: var(--improve-color);
     margin-bottom: 0.5rem;
+}
+
+/* Fix error and warning message visibility */
+.stAlert > div {
+    background-color: var(--error-bg) !important;
+    border: 1px solid var(--error-border) !important;
+    color: var(--error-text) !important;
+}
+
+.stAlert[data-baseweb="notification"][kind="error"] > div {
+    background-color: var(--error-bg) !important;
+    border: 1px solid var(--error-border) !important;
+    color: var(--error-text) !important;
+}
+
+.stAlert[data-baseweb="notification"][kind="warning"] > div {
+    background-color: var(--warning-bg) !important;
+    border: 1px solid var(--warning-border) !important;
+    color: var(--warning-text) !important;
+}
+
+/* Custom error styling for our error tracker */
+.custom-error {
+    background-color: var(--error-bg);
+    border: 1px solid var(--error-border);
+    color: var(--error-text);
+    padding: 12px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+}
+
+.custom-warning {
+    background-color: var(--warning-bg);
+    border: 1px solid var(--warning-border);
+    color: var(--warning-text);
+    padding: 12px;
+    border-radius: 6px;
+    margin-bottom: 10px;
 }
 
 /* Enhancing form inputs */
@@ -271,9 +314,9 @@ class ErrorTracker:
         with st.expander("Troubleshooting Information", expanded=self.has_critical_error):
             for error in self.errors:
                 if error["critical"]:
-                    st.error(f"{error['message']}")
+                    st.markdown(f'<div class="custom-error"><strong>Error:</strong> {error["message"]}</div>', unsafe_allow_html=True)
                 else:
-                    st.warning(f"{error['message']}")
+                    st.markdown(f'<div class="custom-warning"><strong>Warning:</strong> {error["message"]}</div>', unsafe_allow_html=True)
                 
                 if error.get("details") and st.checkbox("Show technical details"):
                     st.code(error["details"])
@@ -289,9 +332,9 @@ class DatabaseManager:
     """Manages database connections and operations."""
     
     def __init__(self):
-        self.conn_pool = None
+        self.connection_params = None
         
-        # Initialize connection pool
+        # Initialize connection parameters
         try:
             # Check for required secrets
             required_db_secrets = ["DB_NAME", "DB_USER", "DB_PASSWORD", "DB_HOST", "DB_PORT"]
@@ -301,48 +344,37 @@ class DatabaseManager:
                     print(f"Missing required database secret: {secret}")
                     return
 
-            # Connect to Google Cloud SQL PostgreSQL
-            self.conn_pool = psycopg2.pool.SimpleConnectionPool(
-                1, 10,
-                dbname=st.secrets["DB_NAME"],
-                user=st.secrets["DB_USER"],
-                password=st.secrets["DB_PASSWORD"],
-                host=st.secrets["DB_HOST"],
-                port=st.secrets["DB_PORT"],
-                # Uncomment if using SSL (often required for Google Cloud SQL)
-                sslmode='require',
-                # Add these if you're using SSL certificates
-                # sslrootcert=st.secrets.get("DB_SSL_ROOT_CERT"),
-                # sslcert=st.secrets.get("DB_SSL_CERT"),
-                # sslkey=st.secrets.get("DB_SSL_KEY"),
-            )
-            print("Database connection pool initialized to Google Cloud SQL")
-            st.success("✅ Connected to Google Cloud SQL database")
+            # Store connection parameters
+            self.connection_params = {
+                'dbname': st.secrets["DB_NAME"],
+                'user': st.secrets["DB_USER"],
+                'password': st.secrets["DB_PASSWORD"],
+                'host': st.secrets["DB_HOST"],
+                'port': st.secrets["DB_PORT"],
+                'sslmode': 'require',
+                'connect_timeout': 10  # 10 second connection timeout
+            }
+            
+            print("Database connection parameters configured")
+            st.success("✅ Database connection configured")
         except Exception as e:
-            error_tracker.add_error("db_error", "Failed to initialize database connection pool", True, str(e))
-            st.error(f"❌ Database connection failed: {str(e)}")
+            error_tracker.add_error("db_error", "Failed to configure database connection", True, str(e))
+            st.error(f"❌ Database connection configuration failed: {str(e)}")
             print(f"Database connection error: {str(e)}")
-            self.conn_pool = None
+            self.connection_params = None
     
     def get_connection(self):
-        """Get a connection from the pool."""
-        if not self.conn_pool:
-            error_tracker.add_error("db_error", "No database connection pool available", True)
+        """Get a new database connection."""
+        if not self.connection_params:
+            error_tracker.add_error("db_error", "No database connection parameters available", True)
             return None
             
         try:
-            return self.conn_pool.getconn()
+            conn = psycopg2.connect(**self.connection_params)
+            return conn
         except Exception as e:
             error_tracker.add_error("db_error", "Failed to get database connection", True, str(e))
             return None
-    
-    def release_connection(self, conn):
-        """Release a connection back to the pool."""
-        if self.conn_pool and conn:
-            try:
-                self.conn_pool.putconn(conn)
-            except Exception as e:
-                error_tracker.add_error("db_error", "Failed to release database connection", False, str(e))
     
     def execute_query(self, query, params=None, fetch=True, commit=True):
         """Execute a database query with proper connection management."""
@@ -370,7 +402,7 @@ class DatabaseManager:
             return None
         finally:
             if conn:
-                self.release_connection(conn)
+                conn.close()
     
     def initialize_schema(self):
         """Initialize the database schema if it doesn't exist."""
@@ -444,20 +476,32 @@ class DatabaseManager:
             """
         ]
         
-        for query in schema_queries:
-            self.execute_query(query, fetch=False)
+        for i, query in enumerate(schema_queries):
+            try:
+                self.execute_query(query, fetch=False)
+                print(f"Schema table {i+1}/{len(schema_queries)} initialized")
+            except Exception as e:
+                print(f"Error initializing schema table {i+1}: {str(e)}")
+                error_tracker.add_error("db_error", f"Failed to initialize schema table {i+1}", False, str(e))
             
-        print("Database schema initialized")
+        print("Database schema initialization completed")
 
 # Initialize database manager
 db_manager = DatabaseManager()
 
-# Make sure schema is initialized
-db_manager.initialize_schema()
+# Make sure schema is initialized (but don't block startup if it fails)
+try:
+    db_manager.initialize_schema()
+except Exception as e:
+    print(f"Schema initialization failed: {str(e)}")
+    error_tracker.add_error("db_error", "Schema initialization failed", False, str(e))
 
 # === STRIPE INTEGRATION ===
 # Initialize Stripe with API key
-stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
+if "STRIPE_SECRET_KEY" in st.secrets:
+    stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
+else:
+    print("Warning: STRIPE_SECRET_KEY not found in secrets")
 
 def create_stripe_checkout_session(user_id, email):
     """Create a Stripe checkout session for subscription."""
@@ -910,16 +954,24 @@ def call_anthropic_api_with_timeout(client, prompt, model="claude-3-5-sonnet-202
 def initialize_anthropic_client():
     """Initialize the Anthropic client with proper error handling."""
     try:
+        if "ANTHROPIC_API_KEY" not in st.secrets:
+            st.error("ANTHROPIC_API_KEY not found in Streamlit secrets. Please add it to your .streamlit/secrets.toml file.")
+            st.info("To learn how to set up Streamlit secrets, visit: https://docs.streamlit.io/library/advanced-features/secrets-management")
+            return None
+            
         # Use anthropic.Anthropic for newer versions
         client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
         return client
     except AttributeError:
         # Fallback for older versions if needed
-        client = anthropic.Client(api_key=st.secrets["ANTHROPIC_API_KEY"])
-        return client
-    except KeyError:
-        st.error("ANTHROPIC_API_KEY not found in Streamlit secrets. Please add it to your .streamlit/secrets.toml file.")
-        st.info("To learn how to set up Streamlit secrets, visit: https://docs.streamlit.io/library/advanced-features/secrets-management")
+        try:
+            client = anthropic.Client(api_key=st.secrets["ANTHROPIC_API_KEY"])
+            return client
+        except Exception as e:
+            st.error(f"Failed to initialize Anthropic client: {str(e)}")
+            return None
+    except Exception as e:
+        st.error(f"Failed to initialize Anthropic client: {str(e)}")
         return None
 
 def log_token_usage(user_id, request_type, tokens_used):
@@ -1386,7 +1438,7 @@ def display_user_profile(user_data):
         st.markdown(f"**Email:** {user_data.get('email', 'No email')}")
         
         # Subscription status
-        if user_data.get('subscription_status') == 'active' and user_data.get('subscription_end') > datetime.now():
+        if user_data.get('subscription_status') == 'active' and user_data.get('subscription_end') and user_data.get('subscription_end') > datetime.now():
             days_left = (user_data['subscription_end'] - datetime.now()).days
             st.markdown(f'<span class="subscription-badge">Active Subscription • {days_left} days left</span>', unsafe_allow_html=True)
         elif user_data.get('subscription_status') == 'active':
@@ -1521,29 +1573,6 @@ def parse_cv(client, cv_text, candidate_name):
         if not isinstance(parsed_data, dict):
             error_tracker.add_error("json_error", f"Parsing returned {type(parsed_data).__name__} instead of a dictionary.", True)
             return fallback_structure
-            
-        # Validate and ensure essential fields exist
-        if 'original_filename' not in parsed_data:
-            parsed_data['original_filename'] = candidate_name
-        if 'name' not in parsed_data or not parsed_data['name']:
-            parsed_data['name'] = candidate_name
-        
-        # Ensure proper structure for nested objects
-        if 'contact_info' not in parsed_data or not isinstance(parsed_data['contact_info'], dict):
-            parsed_data['contact_info'] = {"email": None, "phone": None}
-        if 'skills' not in parsed_data or not isinstance(parsed_data['skills'], dict):
-            parsed_data['skills'] = {"technical": [], "soft": []}
-            
-        # Ensure arrays for collections
-        for field in ['education', 'work_experience', 'certifications']:
-            if field not in parsed_data or not isinstance(parsed_data[field], list):
-                parsed_data[field] = []
-                
-        return parsed_data
-        
-    except json.JSONDecodeError as json_e:
-        error_tracker.add_error("json_error", f"Failed to decode JSON response: {json_e}", True)
-        return fallback_structure
 
 def analyze_cv_match(client, cv_data, job_description):
     """
@@ -2181,7 +2210,7 @@ def show_admin_page():
             
             # Add user status column
             users_df['status'] = users_df.apply(
-                lambda x: 'Active' if x['subscription_status'] == 'active' and x['subscription_end'] > datetime.now() 
+                lambda x: 'Active' if x['subscription_status'] == 'active' and x['subscription_end'] and x['subscription_end'] > datetime.now() 
                 else 'Expired' if x['subscription_status'] == 'active' 
                 else 'Inactive',
                 axis=1
@@ -2190,6 +2219,7 @@ def show_admin_page():
             # Format dates
             for date_col in ['created_at', 'last_login', 'subscription_start', 'subscription_end']:
                 if date_col in users_df.columns:
+                    users_df[date_col] = pd.to_datetime(users_df[date_col], errors='coerce')
                     users_df[date_col] = users_df[date_col].dt.strftime('%Y-%m-%d %H:%M')
             
             # Display user table
@@ -2475,7 +2505,7 @@ def show_admin_page():
         st.subheader("System Status")
         
         # Display database connection status
-        db_status = "Connected" if db_manager.conn_pool else "Disconnected"
+        db_status = "Connected" if db_manager.connection_params else "Disconnected"
         
         # Display API key status
         api_key_status = "Configured" if "ANTHROPIC_API_KEY" in st.secrets else "Missing"
@@ -2793,7 +2823,7 @@ def show_dashboard():
                                 # Analyse match
                                 status_text.text("Analysing CV match with job description...")
                                 analysis_results = analyze_cv_match(client, cv_data, job_description)
-                                progress_bar.progress(0.50)
+                                progress_bar.progress(0.85)
                                 
                                 if analysis_results:
                                     # Save analysis results
@@ -2806,14 +2836,9 @@ def show_dashboard():
                                         match_score,
                                         analysis_results
                                     )
-                                    progress_bar.progress(0.85)
+                                    progress_bar.progress(1.0)
                                     
                                     if save_success:
-                                        # Industry analysis - new feature
-                                        status_text.text("Conducting industry-specific analysis...")
-                                        industry_analysis = analyze_industry_fit(client, cv_data, job_description, analysis_results)
-                                        progress_bar.progress(1.0)
-                                        
                                         # Store in session state
                                         st.session_state['current_analysis_id'] = analysis_id
                                         
@@ -2830,240 +2855,6 @@ def show_dashboard():
         
         # Display any errors that were tracked
         error_tracker.display_errors()
-    
-    # MY CVS TAB
-    with dashboard_tabs[1]:
-        st.header("My CVs")
-        
-        # Get user's CVs
-        user_cvs = get_user_cvs(st.session_state['user_id'])
-        
-        # Upload new CV button
-        with st.expander("Upload New CV", expanded=not user_cvs):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                cv_file = st.file_uploader(
-                    "Upload your CV (PDF, DOCX, or TXT)",
-                    type=["pdf", "docx", "txt"],
-                    key="cv_uploader_tab"
-                )
-            
-            with col2:
-                cv_name = st.text_input("CV Name", placeholder="Give your CV a name", key="cv_name_tab")
-                
-                if st.button("Upload CV", disabled=not (cv_file and cv_name)):
-                    with st.spinner("Extracting text from CV..."):
-                        cv_text = extract_text_from_file(cv_file)
-                        
-                        if cv_text:
-                            # Save CV to database
-                            success, cv_id = save_cv(st.session_state['user_id'], cv_name, cv_text)
-                            
-                            if success:
-                                # Parse CV
-                                with st.spinner("Parsing CV..."):
-                                    parsed_data = parse_cv(client, cv_text, cv_name)
-                                    
-                                    if parsed_data:
-                                        # Update CV with parsed data
-                                        update_cv_parsed_data(cv_id, parsed_data)
-                                        st.success(f"CV '{cv_name}' uploaded and parsed successfully!")
-                                        st.rerun()
-        
-        # Display existing CVs
-        if user_cvs:
-            st.subheader(f"Your CVs ({len(user_cvs)})")
-            
-            # Create a grid of cards for CVs
-            for i in range(0, len(user_cvs), 2):
-                cols = st.columns(2)
-                
-                for j in range(2):
-                    if i + j < len(user_cvs):
-                        cv = user_cvs[i + j]
-                        
-                        with cols[j]:
-                            st.markdown('<div class="card">', unsafe_allow_html=True)
-                            st.markdown(f"### {cv['cv_name']}")
-                            st.markdown(f"Uploaded: {cv['upload_date'].strftime('%d %b %Y')}")
-                            
-                            # Check if CV has been parsed
-                            if cv.get('parsed_data'):
-                                with st.expander("View CV Summary"):
-                                    display_cv_summary(cv)
-                            else:
-                                with st.spinner("Parsing CV..."):
-                                    # Parse CV if not already parsed
-                                    parsed_data = parse_cv(client, cv['cv_text'], cv['cv_name'])
-                                    
-                                    if parsed_data:
-                                        # Update CV with parsed data
-                                        update_cv_parsed_data(cv['cv_id'], parsed_data)
-                                        cv['parsed_data'] = parsed_data
-                                        
-                                        with st.expander("View CV Summary"):
-                                            display_cv_summary(cv)
-                            
-                            # Action buttons
-                            col1, col2 = st.columns(2)
-                            
-                            with col1:
-                                if st.button("Use for Analysis", key=f"use_{cv['cv_id']}"):
-                                    # Switch to analysis tab with this CV selected
-                                    st.session_state['selected_cv_id'] = cv['cv_id']
-                                    st.session_state['show_analysis_tab'] = True
-                                    st.rerun()
-                            
-                            with col2:
-                                if st.button("Delete CV", key=f"delete_{cv['cv_id']}"):
-                                    # Delete confirmation
-                                    if st.checkbox(f"Confirm deletion of '{cv['cv_name']}'", key=f"confirm_{cv['cv_id']}"):
-                                        # First check if CV is used in any analyses
-                                        analyses = db_manager.execute_query(
-                                            "SELECT * FROM analyses WHERE cv_id = %s",
-                                            (cv['cv_id'],)
-                                        )
-                                        
-                                        if analyses:
-                                            # Delete related analyses first
-                                            db_manager.execute_query(
-                                                "DELETE FROM analyses WHERE cv_id = %s",
-                                                (cv['cv_id'],),
-                                                fetch=False
-                                            )
-                                        
-                                        # Delete CV
-                                        db_manager.execute_query(
-                                            "DELETE FROM cvs WHERE cv_id = %s",
-                                            (cv['cv_id'],),
-                                            fetch=False
-                                        )
-                                        
-                                        st.success(f"CV '{cv['cv_name']}' deleted successfully!")
-                                        st.rerun()
-                            st.markdown('</div>', unsafe_allow_html=True)
-        else:
-            st.info("You don't have any CVs uploaded yet. Please upload one using the form above.")
-    
-    # MY ANALYSES TAB
-    with dashboard_tabs[2]:
-        st.header("My Analyses")
-        
-        # Show analysis tab if coming from analyse button
-        if st.session_state.get('show_analysis_tab', False):
-            st.session_state['show_analysis_tab'] = False
-            
-            if 'current_analysis_id' in st.session_state:
-                # Get the analysis
-                analysis_data = get_analysis_by_id(st.session_state['current_analysis_id'])
-                
-                if analysis_data:
-                    # Display analysis results
-                    st.subheader(f"Analysis Results: {analysis_data['job_title']}")
-                    
-                    # Convert JSON data
-                    analysis = analysis_data['analysis_data']
-                    
-                    # Main score section
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    score_col1, score_col2 = st.columns([1, 3])
-                    
-                    with score_col1:
-                        match_score = analysis.get('match_score', 0)
-                        display_match_score(match_score)
-                    
-                    with score_col2:
-                        # Skill assessment visualization
-                        st.subheader("Skills Assessment")
-                        skills_assessment = analysis.get('skills_assessment', {})
-                        
-                        skills_chart = create_skills_chart(skills_assessment)
-                        if skills_chart:
-                            st.altair_chart(skills_chart, use_container_width=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    # Strengths and improvement areas
-                    display_strengths_and_improvements(
-                        strengths=analysis.get('strengths', []), 
-                        improvements=analysis.get('improvement_areas', [])
-                    )
-                    
-                    # Detailed analysis tabs
-                    analysis_detail_tabs = st.tabs([
-                        "Recommendations", "Keywords", "Industry Insights", "Interview Tips", "Full Report"
-                    ])
-                    
-                    with analysis_detail_tabs[0]:
-                        # Recommendations
-                        display_recommendations(analysis.get('recommendations', []))
-                        
-                        # Experience Gap Analysis
-                        st.markdown('<div class="card">', unsafe_allow_html=True)
-                        st.subheader("Experience Gap Analysis")
-                        experience_gaps = analysis.get('experience_gap_analysis', [])
-                        if experience_gaps:
-                            for gap in experience_gaps:
-                                st.markdown(f"🔸 **{gap}**")
-                        else:
-                            st.markdown("*No specific experience gaps identified.*")
-                        st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    with analysis_detail_tabs[1]:
-                        # Keyword Analysis
-                        st.markdown('<div class="card">', unsafe_allow_html=True)
-                        keywords = analysis.get('keyword_analysis', [])
-                        display_keywords(keywords, max_cols=3)
-                        st.markdown('</div>', unsafe_allow_html=True)
-                        
-                        # Potential Alternative Job Titles
-                        st.markdown('<div class="card">', unsafe_allow_html=True)
-                        st.subheader("Alternative Job Titles to Consider")
-                        alt_titles = analysis.get('potential_job_titles', [])
-                        if alt_titles:
-                            st.markdown("Based on your CV, you might also be a good fit for these roles:")
-                            for title in alt_titles:
-                                st.markdown(f"🔹 **{title}**")
-                        else:
-                            st.markdown("*No alternative job titles suggested.*")
-                        st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    with analysis_detail_tabs[2]:
-                        # Generate industry analysis
-                        with st.spinner("Generating industry insights..."):
-                            # Check if we need to generate industry analysis
-                            if not 'industry_analysis' in st.session_state or st.session_state['industry_analysis'] is None:
-                                # Generate industry analysis
-                                industry_analysis = analyze_industry_fit(
-                                    client,
-                                    {'parsed_data': analysis_data['cv_parsed_data']}, 
-                                    analysis_data['description_text'],
-                                    analysis
-                                )
-                                st.session_state['industry_analysis'] = industry_analysis
-                            else:
-                                industry_analysis = st.session_state['industry_analysis']
-                            
-                            if industry_analysis:
-                                # Industry overview
-                                st.markdown('<div class="card">', unsafe_allow_html=True)
-                                industry_col1, industry_col2 = st.columns([1, 1])
-                                
-                                with industry_col1:
-                                    st.subheader("Industry Profile")
-                                    st.markdown(f"**Industry:** {industry_analysis.get('industry_identified', 'Unknown')}")
-                                    industry_fit = industry_analysis.get('industry_fit_score', 0)
-                                    
-                                    # Determine colour for industry fit
-                                    if industry_fit >= 80:
-                                        ind_color = "green"
-                                        ind_text = "Strong Industry Fit"
-                                    elif industry_fit >= 60:
-                                        ind_color = "orange" 
-                                        ind_text = "Moderate Industry Fit"
-                                    else:
-                                        ind_color = "red"
-                                        ind_text = "Low Industry Fit"
 
 # === MAIN APPLICATION ===
 def main():
@@ -3102,3 +2893,26 @@ def main():
 
 if __name__ == "__main__":
     main()
+            
+        # Validate and ensure essential fields exist
+        if 'original_filename' not in parsed_data:
+            parsed_data['original_filename'] = candidate_name
+        if 'name' not in parsed_data or not parsed_data['name']:
+            parsed_data['name'] = candidate_name
+        
+        # Ensure proper structure for nested objects
+        if 'contact_info' not in parsed_data or not isinstance(parsed_data['contact_info'], dict):
+            parsed_data['contact_info'] = {"email": None, "phone": None}
+        if 'skills' not in parsed_data or not isinstance(parsed_data['skills'], dict):
+            parsed_data['skills'] = {"technical": [], "soft": []}
+            
+        # Ensure arrays for collections
+        for field in ['education', 'work_experience', 'certifications']:
+            if field not in parsed_data or not isinstance(parsed_data[field], list):
+                parsed_data[field] = []
+                
+        return parsed_data
+        
+    except json.JSONDecodeError as json_e:
+        error_tracker.add_error("json_error", f"Failed to decode JSON response: {json_e}", True)
+        return fallback_structure
