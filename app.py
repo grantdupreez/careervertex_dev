@@ -1,4 +1,7 @@
 import streamlit as st
+
+st.write("Starting app initialization...")
+
 import pandas as pd
 import altair as alt
 import numpy as np
