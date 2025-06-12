@@ -30,9 +30,7 @@ st.set_page_config(
 )
 
 # === THEME SETTINGS AND CUSTOM CSS ===
-# Setup color variables for light/dark mode
-# These will be referenced in CSS and other styling
-color_vars = """
+custom_css = """
 :root {
     --primary-color: #4169E1;
     --secondary-color: #6c757d;
@@ -51,57 +49,35 @@ color_vars = """
     --score-low: #dc3545;
 }
 
-[data-theme="dark"] {
-    --primary-color: #738DF6;
-    --secondary-color: #ced4da;
-    --background-color: #111827;
-    --surface-color: #1f2937;
-    --text-color: #f8f9fa;
-    --light-accent: #374151;
-    --mid-accent: #4b5563;
-    --dark-accent: #6b7280;
-    --card-shadow: rgba(0, 0, 0, 0.25);
-    --tag-bg: #374151;
-    --strength-color: #34D399;
-    --improve-color: #FBBF24;
-    --score-high: #34D399;
-    --score-mid: #FBBF24;
-    --score-low: #F87171;
-}
-"""
-
-custom_css = f"""
-{color_vars}
-
-.stApp {{
+.stApp {
     background-color: var(--background-color);
     color: var(--text-color);
-}}
+}
 
-.stTabs [data-baseweb="tab-list"] {{
+.stTabs [data-baseweb="tab-list"] {
     gap: 2px;
-}}
+}
 
-.stTabs [data-baseweb="tab"] {{
+.stTabs [data-baseweb="tab"] {
     background-color: var(--surface-color);
     color: var(--text-color);
     border-radius: 4px 4px 0 0;
-}}
+}
 
-.stTabs [aria-selected="true"] {{
+.stTabs [aria-selected="true"] {
     background-color: var(--primary-color) !important;
     color: white !important;
-}}
+}
 
-div.card {{
+div.card {
     border-radius: 10px;
     background-color: var(--surface-color);
     padding: 1.5rem;
     margin-bottom: 1rem;
     box-shadow: 0 4px 6px var(--card-shadow);
-}}
+}
 
-div.keyword-tag {{
+div.keyword-tag {
     display: inline-block;
     background-color: var(--tag-bg);
     border-radius: 20px;
@@ -109,71 +85,63 @@ div.keyword-tag {{
     margin: 5px;
     font-weight: 500;
     text-align: center;
-}}
+}
 
-div.trend-card {{
+div.trend-card {
     background-color: var(--surface-color);
     padding: 15px;
     margin: 10px 0;
     border-left: 4px solid var(--primary-color);
     border-radius: 5px;
-}}
+}
 
-.match-score-high {{
+.match-score-high {
     color: var(--score-high);
     font-size: 3.5rem;
     font-weight: bold;
-}}
+}
 
-.match-score-mid {{
+.match-score-mid {
     color: var(--score-mid);
     font-size: 3.5rem;
     font-weight: bold;
-}}
+}
 
-.match-score-low {{
+.match-score-low {
     color: var(--score-low);
     font-size: 3.5rem;
     font-weight: bold;
-}}
+}
 
-.strength-item {{
+.strength-item {
     color: var(--strength-color);
     margin-bottom: 0.5rem;
-}}
+}
 
-.improvement-item {{
+.improvement-item {
     color: var(--improve-color);
     margin-bottom: 0.5rem;
-}}
-
-/* Theme toggle button styling */
-.theme-toggle {{
-    position: fixed;
-    top: 10px;
-    right: 10px;
-    z-index: 1000;
-}}
+}
 
 /* Enhancing form inputs */
 div[data-baseweb="input"] input, 
-div[data-baseweb="textarea"] textarea {{
+div[data-baseweb="textarea"] textarea {
     background-color: var(--surface-color);
     color: var(--text-color);
     border: 1px solid var(--mid-accent);
-}}
+}
 
 /* Button styling */
-.stButton button {{
+.stButton button {
     border-radius: 6px;
-}}
+}
 
-.stButton > button[data-baseweb="button"] {{
+.stButton > button[data-baseweb="button"] {
     border: 1px solid var(--mid-accent);
-}}
+}
 
 /* Pricing card styling */
-.pricing-card {{
+.pricing-card {
     border: 1px solid var(--mid-accent);
     border-radius: 10px;
     padding: 20px;
@@ -181,36 +149,36 @@ div[data-baseweb="textarea"] textarea {{
     background-color: var(--surface-color);
     box-shadow: 0 4px 6px var(--card-shadow);
     height: 100%;
-}}
+}
 
-.pricing-card h3 {{
+.pricing-card h3 {
     color: var(--primary-color);
     margin-bottom: 15px;
-}}
+}
 
-.pricing-price {{
+.pricing-price {
     font-size: 2rem;
     font-weight: bold;
     margin: 15px 0;
-}}
+}
 
-.pricing-period {{
+.pricing-period {
     font-size: 0.9rem;
     opacity: 0.8;
-}}
+}
 
-.feature-item {{
+.feature-item {
     margin: 8px 0;
     text-align: left;
-}}
+}
 
-.feature-item i {{
+.feature-item i {
     color: var(--primary-color);
     margin-right: 5px;
-}}
+}
 
 /* Subscription badge */
-.subscription-badge {{
+.subscription-badge {
     display: inline-block;
     background-color: var(--primary-color);
     color: white;
@@ -218,21 +186,21 @@ div[data-baseweb="textarea"] textarea {{
     border-radius: 15px;
     font-size: 0.8rem;
     font-weight: bold;
-}}
+}
 
-.subscription-badge.expired {{
+.subscription-badge.expired {
     background-color: var(--score-low);
-}}
+}
 
 /* User profile card */
-.user-profile {{
+.user-profile {
     border-radius: 10px;
     padding: 15px;
     background-color: var(--surface-color);
     margin-bottom: 15px;
-}}
+}
 
-.user-avatar {{
+.user-avatar {
     width: 50px;
     height: 50px;
     border-radius: 25px;
@@ -244,7 +212,7 @@ div[data-baseweb="textarea"] textarea {{
     font-weight: bold;
     font-size: 1.2rem;
     margin-right: 15px;
-}}
+}
 """
 
 st.markdown(f"""
@@ -1447,28 +1415,6 @@ def display_pricing():
     
     st.markdown('</div>', unsafe_allow_html=True)
 
-# === THEME TOGGLE FUNCTIONALITY ===
-def toggle_theme():
-    """Toggle between light and dark themes"""
-    current_theme = st.session_state.get("theme", "light")
-    if current_theme == "light":
-        st.session_state["theme"] = "dark"
-    else:
-        st.session_state["theme"] = "light"
-
-# Initialize theme in session state if not present
-if "theme" not in st.session_state:
-    # Default to system preference or light
-    st.session_state["theme"] = "light"
-
-# Apply the current theme using HTML
-current_theme = st.session_state.get("theme", "light")
-st.markdown(f"""
-<script>
-    document.body.setAttribute('data-theme', '{current_theme}');
-</script>
-""", unsafe_allow_html=True)
-
 # === ANALYSIS FUNCTIONS ===
 def parse_cv(client, cv_text, candidate_name):
     """
@@ -2570,12 +2516,9 @@ def show_dashboard():
     if user_data:
         has_subscription = auth_manager.check_subscription(user_data['user_id'])
     
-    # Add theme toggle button in sidebar
+    # User profile in sidebar
     with st.sidebar:
-        st.title("Settings")
-        if st.button("Toggle Light/Dark Mode"):
-            toggle_theme()
-            st.rerun()
+        st.title("User Profile")
         
         # User profile
         if user_data:
@@ -3100,487 +3043,3 @@ def show_dashboard():
                                     else:
                                         ind_color = "red"
                                         ind_text = "Low Industry Fit"
-                                        
-                                    st.markdown(f"**Industry Fit Score:** :{ind_color}[{industry_fit}%] - {ind_text}")
-                                    
-                                    # Salary information
-                                    salary_range = industry_analysis.get('salary_range', {})
-                                    if salary_range and salary_range.get('min', 0) > 0:
-                                        st.markdown(f"**Typical Salary Range:** £{salary_range.get('min', 0):,} - £{salary_range.get('max', 0):,}")
-                                
-                                with industry_col2:
-                                    # Top competitors
-                                    st.subheader("Key Companies in This Space")
-                                    competitors = industry_analysis.get('competitors', [])
-                                    if competitors:
-                                        for company in competitors:
-                                            st.markdown(f"🏢 **{company}**")
-                                    else:
-                                        st.markdown("*No competitor information available.*")
-                                st.markdown('</div>', unsafe_allow_html=True)
-                                
-                                # Current trends section with improved styling
-                                st.markdown('<div class="card">', unsafe_allow_html=True)
-                                st.subheader("Current Industry Trends")
-                                trends = industry_analysis.get('industry_trends', [])
-                                display_trends(trends, max_cols=2)
-                                st.markdown('</div>', unsafe_allow_html=True)
-                                
-                                # Industry challenges section
-                                st.markdown('<div class="card">', unsafe_allow_html=True)
-                                st.subheader("Current Industry Challenges")
-                                challenges = industry_analysis.get('industry_challenges', [])
-                                if challenges:
-                                    for challenge in challenges:
-                                        st.markdown(f"⚠️ **{challenge}**")
-                                else:
-                                    st.markdown("*No industry challenges identified.*")
-                                st.markdown('</div>', unsafe_allow_html=True)
-                                
-                                # Industry keywords
-                                st.markdown('<div class="card">', unsafe_allow_html=True)
-                                st.subheader("Industry-Specific Keywords")
-                                st.markdown("*Adding these industry-specific keywords to your CV could improve your chances:*")
-                                
-                                ind_keywords = industry_analysis.get('industry_keywords', [])
-                                display_keywords(ind_keywords, max_cols=3)
-                                st.markdown('</div>', unsafe_allow_html=True)
-                            else:
-                                st.info("Industry analysis is not available. Please try running the analysis again.")
-                    
-                    with analysis_detail_tabs[3]:
-                        # Generate interview tips
-                        with st.spinner("Generating interview tips..."):
-                            # Check if we need to generate interview tips
-                            if not 'interview_tips' in st.session_state or st.session_state['interview_tips'] is None:
-                                # Generate interview tips
-                                interview_tips = generate_interview_tips(
-                                    client,
-                                    {'parsed_data': analysis_data['cv_parsed_data']},
-                                    analysis_data['description_text'],
-                                    analysis
-                                )
-                                st.session_state['interview_tips'] = interview_tips
-                            else:
-                                interview_tips = st.session_state['interview_tips']
-                            
-                            # Display interview tips
-                            st.markdown('<div class="card">', unsafe_allow_html=True)
-                            st.subheader("Interview Preparation Tips")
-                            
-                            if interview_tips and isinstance(interview_tips, str):
-                                st.markdown(interview_tips)
-                            elif interview_tips and isinstance(interview_tips, list):
-                                for tip in interview_tips:
-                                    st.markdown(tip)
-                            else:
-                                st.markdown("*Unable to generate interview tips.*")
-                            st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    with analysis_detail_tabs[4]:
-                        # Generate comprehensive report
-                        with st.spinner("Generating comprehensive report..."):
-                            # Check if we need to generate report
-                            if not 'comprehensive_report' in st.session_state or st.session_state['comprehensive_report'] is None:
-                                # Get industry analysis if available
-                                industry_analysis = st.session_state.get('industry_analysis')
-                                
-                                # Generate report
-                                comprehensive_report = generate_comprehensive_report(
-                                    {'parsed_data': analysis_data['cv_parsed_data']},
-                                    analysis_data['description_text'],
-                                    analysis,
-                                    industry_analysis
-                                )
-                                st.session_state['comprehensive_report'] = comprehensive_report
-                            else:
-                                comprehensive_report = st.session_state['comprehensive_report']
-                            
-                            # Display report
-                            st.markdown('<div class="card">', unsafe_allow_html=True)
-                            
-                            # Generate cover letter
-                            if st.button("Generate Cover Letter"):
-                                with st.spinner("Creating your customised cover letter..."):
-                                    cover_letter = generate_cover_letter(
-                                        client,
-                                        {'parsed_data': analysis_data['cv_parsed_data']},
-                                        analysis_data['description_text'],
-                                        analysis
-                                    )
-                                    st.session_state['cover_letter'] = cover_letter
-                                    st.success("Cover letter generated successfully!")
-                            
-                            # Display cover letter if available
-                            if 'cover_letter' in st.session_state and st.session_state['cover_letter']:
-                                with st.expander("Your Customised Cover Letter", expanded=True):
-                                    st.markdown(st.session_state['cover_letter'])
-                                    
-                                    # Add option to download cover letter as text file
-                                    cover_letter_text = st.session_state['cover_letter']
-                                    st.download_button(
-                                        label="Download Cover Letter",
-                                        data=cover_letter_text,
-                                        file_name="cover_letter.txt",
-                                        mime="text/plain"
-                                    )
-                            
-                            # Display full report
-                            if comprehensive_report:
-                                with st.expander("Full Analysis Report", expanded=True):
-                                    st.markdown(comprehensive_report)
-                                    
-                                    # Offer download
-                                    st.download_button(
-                                        label="Download Full Report as Markdown",
-                                        data=comprehensive_report,
-                                        file_name="cv_analysis_report.md",
-                                        mime="text/markdown"
-                                    )
-                            st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Get user's analyses
-        user_analyses = get_user_analyses(st.session_state['user_id'])
-        
-        if user_analyses:
-            # Generate trend charts
-            trend_charts = generate_trend_charts(user_analyses)
-            
-            if trend_charts:
-                st.subheader("Analysis Trends")
-                st.markdown('<div class="card">', unsafe_allow_html=True)
-                
-                # Match score trend
-                st.markdown("#### Match Score Trend")
-                st.altair_chart(trend_charts.get('match_score'), use_container_width=True)
-                
-                # Skills comparison across jobs (if available)
-                if 'skills' in trend_charts:
-                    st.markdown("#### Skills Assessment Across Applications")
-                    st.altair_chart(trend_charts.get('skills'), use_container_width=True)
-                
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            # List of analyses
-            st.subheader(f"Your Analyses ({len(user_analyses)})")
-            
-            for analysis in user_analyses:
-                st.markdown('<div class="card">', unsafe_allow_html=True)
-                
-                # Header with job title, company, and date
-                header_col1, header_col2 = st.columns([3, 1])
-                
-                with header_col1:
-                    st.markdown(f"### {analysis['job_title']}")
-                    if analysis['company']:
-                        st.markdown(f"**Company:** {analysis['company']}")
-                    st.markdown(f"**Date:** {analysis['created_at'].strftime('%d %b %Y')}")
-                    st.markdown(f"**CV Used:** {analysis['cv_name']}")
-                
-                with header_col2:
-                    # Display match score
-                    match_score = analysis['match_score']
-                    
-                    if match_score >= 80:
-                        score_color = "green"
-                    elif match_score >= 60:
-                        score_color = "orange"
-                    else:
-                        score_color = "red"
-                        
-                    st.markdown(f"### Match Score")
-                    st.markdown(f"<span style='color: {score_color}; font-size: 1.8rem; font-weight: bold;'>{match_score}%</span>", unsafe_allow_html=True)
-                
-                # View details button
-                if st.button("View Full Analysis", key=f"view_{analysis['analysis_id']}"):
-                    # Set the current analysis ID and rerun
-                    st.session_state['current_analysis_id'] = analysis['analysis_id']
-                    st.session_state['show_analysis_tab'] = True
-                    st.rerun()
-                
-                # Delete button
-                if st.button("Delete Analysis", key=f"delete_{analysis['analysis_id']}"):
-                    # Delete confirmation
-                    if st.checkbox(f"Confirm deletion", key=f"confirm_{analysis['analysis_id']}"):
-                        # Delete analysis
-                        db_manager.execute_query(
-                            "DELETE FROM analyses WHERE analysis_id = %s",
-                            (analysis['analysis_id'],),
-                            fetch=False
-                        )
-                        
-                        st.success(f"Analysis deleted successfully!")
-                        st.rerun()
-                
-                st.markdown('</div>', unsafe_allow_html=True)
-        else:
-            st.info("You haven't performed any analyses yet. Go to the 'Analyse New Job' tab to get started.")
-    
-    # MY ACCOUNT TAB
-    with dashboard_tabs[3]:
-        st.header("My Account")
-        
-        # User information
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader("Account Information")
-        
-        # Display user data
-        if user_data:
-            st.markdown(f"**Name:** {user_data.get('full_name', 'Not provided')}")
-            st.markdown(f"**Email:** {user_data['email']}")
-            st.markdown(f"**Member Since:** {user_data['created_at'].strftime('%d %B %Y')}")
-            
-            # Subscription details
-            st.markdown("### Subscription Status")
-            
-            if user_data.get('subscription_status') == 'active' and user_data.get('subscription_end') > datetime.now():
-                days_left = (user_data['subscription_end'] - datetime.now()).days
-                st.success(f"Active Subscription - {days_left} days remaining")
-                st.markdown(f"**Renewal Date:** {user_data['subscription_end'].strftime('%d %B %Y')}")
-                
-                # Manage subscription button (link to Stripe customer portal)
-                if st.button("Manage Subscription"):
-                    # Create a customer portal session
-                    if user_data.get('stripe_customer_id'):
-                        try:
-                            portal_session = stripe.billing_portal.Session.create(
-                                customer=user_data['stripe_customer_id'],
-                                return_url=st.secrets["APP_URL"]
-                            )
-                            st.session_state['portal_url'] = portal_session.url
-                            st.success("Redirecting to subscription management portal...")
-                            st.markdown(f'<meta http-equiv="refresh" content="2;URL=\'{portal_session.url}\'">', unsafe_allow_html=True)
-                        except Exception as e:
-                            error_tracker.add_error("payment_error", "Failed to create customer portal session", True, str(e))
-                            st.error("Failed to access subscription management. Please try again later.")
-            else:
-                st.warning("You don't have an active subscription.")
-                
-                # Subscribe button
-                if st.button("Subscribe Now"):
-                    try:
-                        checkout_session = create_stripe_checkout_session(
-                            user_data['user_id'],
-                            user_data['email']
-                        )
-                        
-                        if checkout_session:
-                            st.session_state['checkout_url'] = checkout_session.url
-                            st.success("Redirecting to payment page...")
-                            st.markdown(f'<meta http-equiv="refresh" content="2;URL=\'{checkout_session.url}\'">', unsafe_allow_html=True)
-                    except Exception as e:
-                        error_tracker.add_error("payment_error", "Failed to create checkout session", True, str(e))
-                        st.error("Failed to create checkout session. Please try again.")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Update account information
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader("Update Account Information")
-        
-        with st.form("update_account_form"):
-            new_name = st.text_input("Full Name", value=user_data.get('full_name', ''))
-            current_password = st.text_input("Current Password", type="password")
-            new_password = st.text_input("New Password (leave blank to keep current)", type="password")
-            confirm_password = st.text_input("Confirm New Password", type="password")
-            
-            if st.form_submit_button("Update Account"):
-                # Validate current password
-                if current_password:
-                    if bcrypt.checkpw(current_password.encode('utf-8'), user_data['password_hash'].encode('utf-8')):
-                        # Update name
-                        if new_name != user_data.get('full_name', ''):
-                            db_manager.execute_query(
-                                "UPDATE users SET full_name = %s WHERE user_id = %s",
-                                (new_name, user_data['user_id']),
-                                fetch=False
-                            )
-                            st.success("Name updated successfully!")
-                        
-                        # Update password
-                        if new_password:
-                            if new_password == confirm_password:
-                                # Hash the password
-                                password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                                
-                                # Update in database
-                                db_manager.execute_query(
-                                    "UPDATE users SET password_hash = %s WHERE user_id = %s",
-                                    (password_hash, user_data['user_id']),
-                                    fetch=False
-                                )
-                                
-                                st.success("Password updated successfully!")
-                            else:
-                                st.error("New passwords do not match.")
-                    else:
-                        st.error("Current password is incorrect.")
-                else:
-                    st.error("Please enter your current password to make changes.")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Usage statistics
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader("Usage Statistics")
-        
-        # Get token usage
-        token_usage = db_manager.execute_query(
-            """
-            SELECT SUM(tokens_used) as total_tokens, COUNT(*) as request_count
-            FROM token_usage
-            WHERE user_id = %s
-            """,
-            (user_data['user_id'],)
-        )
-        
-        # Get analysis count
-        analysis_count = db_manager.execute_query(
-            """
-            SELECT COUNT(*) as count
-            FROM analyses
-            WHERE user_id = %s
-            """,
-            (user_data['user_id'],)
-        )
-        
-        # Get CV count
-        cv_count = db_manager.execute_query(
-            """
-            SELECT COUNT(*) as count
-            FROM cvs
-            WHERE user_id = %s
-            """,
-            (user_data['user_id'],)
-        )
-        
-        # Display stats
-        stats_col1, stats_col2, stats_col3 = st.columns(3)
-        
-        with stats_col1:
-            st.metric("Analyses Performed", analysis_count[0]['count'] if analysis_count else 0)
-        
-        with stats_col2:
-            st.metric("CVs Stored", cv_count[0]['count'] if cv_count else 0)
-        
-        with stats_col3:
-            st.metric("API Requests", token_usage[0]['request_count'] if token_usage else 0)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Delete account
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader("Delete Account")
-        
-        st.warning("Deleting your account will permanently remove all your data, including CVs and analyses.")
-        
-        with st.expander("I want to delete my account"):
-            st.markdown("To delete your account, please confirm by entering your password below:")
-            
-            delete_password = st.text_input("Password", type="password", key="delete_password")
-            
-            if st.button("Delete My Account", type="primary"):
-                # Validate password
-                if delete_password and bcrypt.checkpw(delete_password.encode('utf-8'), user_data['password_hash'].encode('utf-8')):
-                    # Confirm deletion
-                    confirm = st.checkbox("I understand this will permanently delete my account and all my data")
-                    
-                    if confirm:
-                        # Delete related records first
-                        db_manager.execute_query(
-                            "DELETE FROM token_usage WHERE user_id = %s",
-                            (user_data['user_id'],),
-                            fetch=False
-                        )
-                        
-                        db_manager.execute_query(
-                            "DELETE FROM analyses WHERE user_id = %s",
-                            (user_data['user_id'],),
-                            fetch=False
-                        )
-                        
-                        db_manager.execute_query(
-                            "DELETE FROM job_descriptions WHERE user_id = %s",
-                            (user_data['user_id'],),
-                            fetch=False
-                        )
-                        
-                        db_manager.execute_query(
-                            "DELETE FROM cvs WHERE user_id = %s",
-                            (user_data['user_id'],),
-                            fetch=False
-                        )
-                        
-                        db_manager.execute_query(
-                            "DELETE FROM payments WHERE user_id = %s",
-                            (user_data['user_id'],),
-                            fetch=False
-                        )
-                        
-                        # Cancel Stripe subscription if active
-                        if user_data.get('stripe_subscription_id'):
-                            try:
-                                stripe.Subscription.delete(user_data['stripe_subscription_id'])
-                            except Exception as e:
-                                error_tracker.add_error("payment_error", "Failed to cancel Stripe subscription", False, str(e))
-                        
-                        # Finally delete the user
-                        db_manager.execute_query(
-                            "DELETE FROM users WHERE user_id = %s",
-                            (user_data['user_id'],),
-                            fetch=False
-                        )
-                        
-                        # Logout
-                        auth_manager.logout_user()
-                        
-                        st.success("Your account has been deleted successfully. Redirecting to homepage...")
-                        time.sleep(2)
-                        st.rerun()
-                else:
-                    st.error("Password is incorrect.")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-
-# === MAIN APPLICATION ===
-def main():
-    # Check for Stripe session_id in URL params for payment completion
-    query_params = st.experimental_get_query_params()
-    if "success" in query_params and "session_id" in query_params:
-        session_id = query_params["session_id"][0]
-        
-        # Process the successful payment
-        if handle_successful_payment(session_id):
-            st.success("Subscription activated successfully!")
-            
-            # Clear URL parameters
-            st.experimental_set_query_params()
-    
-    # Add theme toggle button in sidebar
-    with st.sidebar:
-        st.title("Settings")
-        if st.button("Toggle Light/Dark Mode"):
-            toggle_theme()
-            st.rerun()
-    
-    # Check if we're in admin mode
-    admin_mode = False
-    if "admin" in st.experimental_get_query_params():
-        # Admin authentication
-        if auth_manager.check_admin_password():
-            admin_mode = True
-    
-    if admin_mode:
-        # Display admin dashboard
-        show_admin_page()
-    else:
-        # Check if user is logged in
-        if 'user_id' in st.session_state:
-            # Show user dashboard
-            show_dashboard()
-        else:
-            # Show login page
-            show_login_page()
-
-if __name__ == "__main__":
-    main()
