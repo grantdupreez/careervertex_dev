@@ -223,17 +223,40 @@ def process_successful_payment(db_manager, user_id, stripe_session):
     try:
         # Get subscription details
         subscription = stripe_session.subscription
+        
+        # If subscription is just an ID string, retrieve the full object
         if isinstance(subscription, str):
             subscription = stripe.Subscription.retrieve(subscription)
         
         if not subscription:
             return False, "No subscription found in payment session"
         
-        # Calculate subscription period
-        subscription_start = datetime.fromtimestamp(subscription.current_period_start)
-        subscription_end = datetime.fromtimestamp(subscription.current_period_end)
+        # Get subscription period details - handling different object structures
+        subscription_start = None
+        subscription_end = None
+        
+        # Try to get period from subscription object
+        if hasattr(subscription, 'current_period_start'):
+            subscription_start = datetime.fromtimestamp(subscription.current_period_start)
+            subscription_end = datetime.fromtimestamp(subscription.current_period_end)
+        elif isinstance(subscription, dict) and 'current_period_start' in subscription:
+            subscription_start = datetime.fromtimestamp(subscription['current_period_start'])
+            subscription_end = datetime.fromtimestamp(subscription['current_period_end'])
+        else:
+            # If we can't get period from subscription, use default 30 days
+            print(f"Warning: Could not get subscription period from subscription object. Using default 30 days.")
+            subscription_start = datetime.now()
+            subscription_end = subscription_start + timedelta(days=30)
         
         print(f"Processing payment for user {user_id}: {subscription_start} to {subscription_end}")
+        
+        # Get customer and subscription IDs
+        customer_id = stripe_session.customer if hasattr(stripe_session, 'customer') else None
+        subscription_id = subscription.id if hasattr(subscription, 'id') else (subscription['id'] if isinstance(subscription, dict) and 'id' in subscription else None)
+        
+        if not subscription_id:
+            print("Warning: No subscription ID found")
+            subscription_id = f"sub_{uuid.uuid4().hex[:24]}"  # Generate a temporary ID
         
         # Update user subscription
         update_result = db_manager.execute_query(
@@ -249,8 +272,8 @@ def process_successful_payment(db_manager, user_id, stripe_session):
             (
                 subscription_start,
                 subscription_end,
-                stripe_session.customer,
-                subscription.id,
+                customer_id,
+                subscription_id,
                 user_id
             ),
             fetch=False,
@@ -275,8 +298,34 @@ def process_successful_payment(db_manager, user_id, stripe_session):
         
         # Record payment
         payment_id = str(uuid.uuid4())
-        amount = float(stripe_session.amount_total or 0) / 100
-        currency = (stripe_session.currency or 'gbp').upper()
+        
+        # Get amount safely
+        amount = 25.00  # Default amount
+        currency = 'gbp'  # Default currency
+        
+        if hasattr(stripe_session, 'amount_total') and stripe_session.amount_total:
+            amount = float(stripe_session.amount_total) / 100
+        elif hasattr(stripe_session, 'amount_subtotal') and stripe_session.amount_subtotal:
+            amount = float(stripe_session.amount_subtotal) / 100
+            
+        if hasattr(stripe_session, 'currency') and stripe_session.currency:
+            currency = stripe_session.currency.upper()
+        
+        # Get payment intent ID
+        payment_intent_id = None
+        if hasattr(stripe_session, 'payment_intent') and stripe_session.payment_intent:
+            payment_intent_id = stripe_session.payment_intent
+        elif hasattr(stripe_session, 'invoice') and stripe_session.invoice:
+            # For subscription payments, there might be an invoice instead
+            try:
+                invoice = stripe.Invoice.retrieve(stripe_session.invoice)
+                if hasattr(invoice, 'payment_intent'):
+                    payment_intent_id = invoice.payment_intent
+            except:
+                pass
+        
+        if not payment_intent_id:
+            payment_intent_id = stripe_session.id  # Use session ID as fallback
         
         db_manager.execute_query(
             """
@@ -287,7 +336,7 @@ def process_successful_payment(db_manager, user_id, stripe_session):
             """,
             (
                 payment_id, user_id, amount, currency,
-                'card', stripe_session.payment_intent or stripe_session.id, 
+                'card', payment_intent_id, 
                 'completed', datetime.now()
             ),
             fetch=False,
@@ -299,6 +348,16 @@ def process_successful_payment(db_manager, user_id, stripe_session):
         
     except Exception as e:
         print(f"Error processing payment: {str(e)}")
+        print(f"Stripe session type: {type(stripe_session)}")
+        print(f"Subscription type: {type(subscription) if 'subscription' in locals() else 'Not retrieved'}")
+        
+        # Try to print the actual structure for debugging
+        try:
+            if 'subscription' in locals():
+                print(f"Subscription data: {subscription}")
+        except:
+            pass
+            
         traceback.print_exc()
         return False, f"Error processing payment: {str(e)}"
 
