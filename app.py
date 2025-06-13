@@ -31,21 +31,33 @@ st.set_page_config(
 # === CUSTOM CSS ===
 custom_css = """
 :root {
-    --primary-color: #4169E1;
-    --secondary-color: #6c757d;
-    --background-color: #f8f9fa;
+    --primary: #0A1F3D; /* Deep Navy Blue */
+    --secondary: #B8860B; /* Dark Goldenrod */
+    --secondary-light: #D4AF37; /* Pale Goldenrod (lighter gold) */
+    --light: #F8F9FA; /* Very Light Gray */
+    --dark: #0D1117; /* Rich Black */
+    --accent: #1E5A94; /* Steel Blue */
+    --gray-light: #F0F2F5; /* Lightest Gray */
+    --gray: #E1E5EA; /* Light Gray */
+    --success: #10B981; /* Emerald Green */
+    --error: #EF4444; /* Red */
+    
+    /* Legacy color mappings for compatibility */
+    --primary-color: var(--primary);
+    --secondary-color: var(--secondary);
+    --background-color: var(--light);
     --surface-color: #ffffff;
-    --text-color: #212529;
-    --light-accent: #e9ecef;
-    --mid-accent: #dee2e6;
+    --text-color: var(--dark);
+    --light-accent: var(--gray);
+    --mid-accent: var(--gray);
     --dark-accent: #adb5bd;
-    --card-shadow: rgba(0, 0, 0, 0.1);
-    --tag-bg: #e9ecef;
-    --strength-color: #28a745;
-    --improve-color: #fd7e14;
-    --score-high: #28a745;
-    --score-mid: #fd7e14;
-    --score-low: #dc3545;
+    --card-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    --tag-bg: var(--gray-light);
+    --strength-color: var(--success);
+    --improve-color: var(--secondary);
+    --score-high: var(--success);
+    --score-mid: var(--secondary);
+    --score-low: var(--error);
     --error-bg: #f8d7da;
     --error-border: #f5c6cb;
     --error-text: #721c24;
@@ -59,44 +71,103 @@ custom_css = """
     color: var(--text-color);
 }
 
+/* Style primary buttons to match the gold gradient */
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-light) 100%);
+    color: var(--dark);
+    border: none;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    box-shadow: 0 5px 15px rgba(184, 134, 11, 0.2);
+    transition: all 0.4s ease;
+}
+
+.stButton > button[kind="primary"]:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 10px 20px rgba(184, 134, 11, 0.3);
+}
+
+/* Style regular buttons */
+.stButton > button {
+    border-radius: 2px;
+    border: 1px solid var(--gray);
+    transition: all 0.3s ease;
+}
+
+.stButton > button:hover {
+    border-color: var(--secondary);
+    color: var(--secondary);
+}
+
+/* Style headers with the Playfair Display feel */
+h1, h2, h3, h4, h5 {
+    color: var(--primary);
+    font-weight: 600;
+}
+
+/* Gold gradient text */
+.gold-gradient {
+    background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-light) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    display: inline;
+}
+
 .stTabs [data-baseweb="tab-list"] {
     gap: 2px;
+    background-color: transparent;
 }
 
 .stTabs [data-baseweb="tab"] {
     background-color: var(--surface-color);
-    color: var(--text-color);
+    color: var(--primary);
     border-radius: 4px 4px 0 0;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border: 1px solid var(--gray);
+    border-bottom: none;
 }
 
 .stTabs [aria-selected="true"] {
-    background-color: var(--primary-color) !important;
-    color: white !important;
+    background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-light) 100%) !important;
+    color: var(--dark) !important;
+    border: none;
 }
 
 div.card {
-    border-radius: 10px;
+    border-radius: 5px;
     background-color: var(--surface-color);
     padding: 1.5rem;
     margin-bottom: 1rem;
-    box-shadow: 0 4px 6px var(--card-shadow);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.03);
+    border: 1px solid var(--gray);
+    transition: all 0.4s ease;
+}
+
+div.card:hover {
+    box-shadow: 0 20px 40px rgba(0,0,0,0.08);
+    transform: translateY(-5px);
 }
 
 div.keyword-tag {
     display: inline-block;
-    background-color: var(--tag-bg);
+    background: linear-gradient(135deg, rgba(184,134,11,0.1) 0%, rgba(212,175,55,0.1) 100%);
+    border: 1px solid var(--secondary-light);
     border-radius: 20px;
     padding: 8px 16px;
     margin: 5px;
     font-weight: 500;
     text-align: center;
+    color: var(--primary);
 }
 
 div.trend-card {
     background-color: var(--surface-color);
     padding: 15px;
     margin: 10px 0;
-    border-left: 4px solid var(--primary-color);
+    border-left: 4px solid var(--secondary);
     border-radius: 5px;
 }
 
@@ -121,11 +192,13 @@ div.trend-card {
 .strength-item {
     color: var(--strength-color);
     margin-bottom: 0.5rem;
+    font-weight: 500;
 }
 
 .improvement-item {
     color: var(--improve-color);
     margin-bottom: 0.5rem;
+    font-weight: 500;
 }
 
 .custom-error {
@@ -150,86 +223,204 @@ div[data-baseweb="input"] input,
 div[data-baseweb="textarea"] textarea {
     background-color: var(--surface-color);
     color: var(--text-color);
-    border: 1px solid var(--mid-accent);
+    border: 1px solid var(--gray);
+    border-radius: 2px;
 }
 
-.stButton button {
-    border-radius: 6px;
+div[data-baseweb="input"] input:focus, 
+div[data-baseweb="textarea"] textarea:focus {
+    border-color: var(--secondary);
+    box-shadow: 0 0 0 2px rgba(184,134,11,0.1);
 }
 
-.stButton > button[data-baseweb="button"] {
-    border: 1px solid var(--mid-accent);
+/* Style file uploader */
+.stFileUploader {
+    border: 2px dashed var(--gray);
+    border-radius: 5px;
+    transition: all 0.3s ease;
+}
+
+.stFileUploader:hover {
+    border-color: var(--secondary);
+}
+
+/* Style expanders */
+.streamlit-expanderHeader {
+    background-color: var(--gray-light);
+    border-radius: 5px;
+    color: var(--primary);
+    font-weight: 500;
+}
+
+.streamlit-expanderHeader:hover {
+    background-color: var(--gray);
 }
 
 .pricing-card {
-    border: 1px solid var(--mid-accent);
-    border-radius: 10px;
-    padding: 20px;
+    border: 1px solid var(--gray);
+    border-radius: 8px;
+    padding: 30px;
     text-align: center;
     background-color: var(--surface-color);
-    box-shadow: 0 4px 6px var(--card-shadow);
+    box-shadow: 0 15px 40px rgba(0,0,0,0.05);
     height: 100%;
+    transition: all 0.4s ease;
+    overflow: hidden;
+    position: relative;
+}
+
+.pricing-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 5px;
+    background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-light) 100%);
+}
+
+.pricing-card:hover {
+    transform: translateY(-10px);
+    box-shadow: 0 20px 50px rgba(0,0,0,0.1);
 }
 
 .pricing-card h3 {
-    color: var(--primary-color);
+    color: var(--primary);
     margin-bottom: 15px;
+    font-size: 24px;
 }
 
 .pricing-price {
-    font-size: 2rem;
-    font-weight: bold;
-    margin: 15px 0;
+    font-size: 48px;
+    font-weight: 700;
+    margin: 20px 0;
+    color: var(--secondary);
 }
 
 .pricing-period {
-    font-size: 0.9rem;
+    font-size: 18px;
     opacity: 0.8;
+    font-weight: 400;
+    vertical-align: middle;
 }
 
 .feature-item {
-    margin: 8px 0;
+    margin: 10px 0;
     text-align: left;
+    padding-left: 25px;
+    position: relative;
 }
 
 .feature-item i {
-    color: var(--primary-color);
-    margin-right: 5px;
+    color: var(--secondary);
+    margin-right: 8px;
+    position: absolute;
+    left: 0;
+    top: 2px;
 }
 
 .subscription-badge {
     display: inline-block;
-    background-color: var(--primary-color);
-    color: white;
-    padding: 5px 10px;
-    border-radius: 15px;
-    font-size: 0.8rem;
-    font-weight: bold;
+    background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-light) 100%);
+    color: var(--dark);
+    padding: 6px 16px;
+    border-radius: 2px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
 }
 
 .subscription-badge.expired {
-    background-color: var(--score-low);
+    background: var(--error);
+    color: white;
 }
 
 .user-profile {
-    border-radius: 10px;
-    padding: 15px;
+    border-radius: 5px;
+    padding: 20px;
     background-color: var(--surface-color);
     margin-bottom: 15px;
+    border: 1px solid var(--gray);
 }
 
 .user-avatar {
     width: 50px;
     height: 50px;
-    border-radius: 25px;
-    background-color: var(--primary-color);
-    color: white;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-light) 100%);
+    color: var(--dark);
     display: flex;
     align-items: center;
     justify-content: center;
     font-weight: bold;
     font-size: 1.2rem;
     margin-right: 15px;
+}
+
+/* Style success/error messages */
+.stSuccess {
+    background-color: rgba(16, 185, 129, 0.1);
+    border: 1px solid var(--success);
+    color: var(--success);
+    padding: 12px;
+    border-radius: 5px;
+}
+
+.stError {
+    background-color: var(--error-bg);
+    border: 1px solid var(--error-border);
+    color: var(--error-text);
+    padding: 12px;
+    border-radius: 5px;
+}
+
+.stWarning {
+    background-color: var(--warning-bg);
+    border: 1px solid var(--warning-border);
+    color: var(--warning-text);
+    padding: 12px;
+    border-radius: 5px;
+}
+
+/* Style metrics */
+[data-testid="metric-container"] {
+    background-color: var(--surface-color);
+    border: 1px solid var(--gray);
+    padding: 15px;
+    border-radius: 5px;
+    text-align: center;
+}
+
+[data-testid="metric-container"] [data-testid="stMetricLabel"] {
+    color: var(--primary);
+    font-weight: 500;
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 1px;
+}
+
+[data-testid="metric-container"] [data-testid="stMetricValue"] {
+    color: var(--secondary);
+    font-weight: 700;
+}
+
+/* Additional styling for forms */
+.stForm {
+    background-color: var(--gray-light);
+    padding: 20px;
+    border-radius: 5px;
+    border: 1px solid var(--gray);
+}
+
+/* Style progress bars */
+.stProgress > div > div > div > div {
+    background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-light) 100%);
+}
+
+/* Style checkbox */
+.stCheckbox > label > div[data-testid="stWidgetLabel"] {
+    color: var(--primary);
 }
 """
 
@@ -238,19 +429,22 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # === INITIALIZATION ===
-@st.cache_resource
 def init_resources():
     """Initialize and cache resources."""
-    print("Initializing resources...")
+    # Only print if not already initialized
+    if 'db_manager' not in st.session_state:
+        print("Initializing resources...")
     
     # Initialize database manager
     db_manager = DatabaseManager()
     
-    # Initialize schema
-    try:
-        db_manager.initialize_schema()
-    except Exception as e:
-        print(f"Schema initialization failed: {str(e)}")
+    # Initialize schema - only if not already done
+    if 'schema_initialized' not in st.session_state:
+        try:
+            db_manager.initialize_schema()
+            st.session_state['schema_initialized'] = True
+        except Exception as e:
+            print(f"Schema initialization failed: {str(e)}")
     
     # Initialize auth manager
     auth_manager = AuthManager(db_manager)
@@ -260,7 +454,7 @@ def init_resources():
     
     return db_manager, auth_manager, error_tracker
 
-# Initialize resources
+# Initialize resources (without caching to avoid connection issues)
 db_manager, auth_manager, error_tracker = init_resources()
 
 # Store in session state for access in other modules
@@ -271,7 +465,7 @@ st.session_state['error_tracker'] = error_tracker
 # === MAIN APPLICATION ===
 def main():
     """Main application entry point."""
-    st.write("Application starting...")  # Debug line
+    # Remove debug line that's slowing startup
     
     # Check for Stripe session_id in URL params for payment completion
     query_params = st.query_params
