@@ -16,7 +16,6 @@ from auth_manager import AuthManager
 from utils import ErrorTracker, extract_text_from_file
 from ai_analysis import initialize_anthropic_client, parse_cv, analyze_cv_match
 from ai_analysis import generate_interview_tips, generate_cover_letter
-from payment_manager import handle_payment_return, create_checkout_session_with_metadata, show_checkout_ui
 from ui_components import display_match_score, display_strengths_and_improvements
 from ui_components import display_recommendations, display_keywords, display_cv_summary
 from ui_components import display_user_profile, display_pricing, create_skills_chart
@@ -455,7 +454,7 @@ def init_resources():
     
     return db_manager, auth_manager, error_tracker
 
-# Initialize resources (without caching to avoid connection issues)
+# Initialize resources
 db_manager, auth_manager, error_tracker = init_resources()
 
 # Store in session state for access in other modules
@@ -467,11 +466,7 @@ st.session_state['error_tracker'] = error_tracker
 def main():
     """Main application entry point."""
     
-    # Handle payment returns FIRST before anything else
-    if handle_payment_return(db_manager, auth_manager):
-        return  # Payment was handled, stop here
-    
-    # Check for any other URL parameters that need handling
+    # Check URL parameters
     query_params = st.query_params
     
     # Check if we're in admin mode
