@@ -468,18 +468,37 @@ def main():
     """Main application entry point."""
     
     # Handle any pending Stripe checkout redirects FIRST
+    # Note: We've changed this to show links instead of auto-redirect due to Streamlit limitations
     if 'checkout_url' in st.session_state and st.session_state['checkout_url']:
         checkout_url = st.session_state['checkout_url']
         del st.session_state['checkout_url']
         
-        # JavaScript redirect
-        redirect_script = f"""
-        <script>
-        window.location.href = "{checkout_url}";
-        </script>
-        """
-        components.html(redirect_script, height=0)
-        st.stop()
+        # Show checkout link page
+        st.title("Complete Your Subscription")
+        st.success("✅ Your checkout session has been created!")
+        st.markdown(f"### [🛒 Click here to complete payment on Stripe]({checkout_url})")
+        st.info("You'll be redirected to Stripe's secure checkout page. After payment, you'll return here.")
+        
+        # Styled button
+        st.markdown(f"""
+        <div style="text-align: center; margin: 30px;">
+            <a href="{checkout_url}" target="_blank" style="
+                background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
+                color: #0D1117;
+                padding: 20px 50px;
+                text-decoration: none;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 20px;
+                display: inline-block;
+                box-shadow: 0 10px 25px rgba(184, 134, 11, 0.3);
+            ">Proceed to Payment →</a>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        st.caption("After completing payment, you'll be redirected back to CareerVertex.")
+        return  # Stop here to show only the checkout link
     
     # Check for Stripe session_id in URL params for payment completion
     query_params = st.query_params
