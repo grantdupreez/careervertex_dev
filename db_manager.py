@@ -89,18 +89,22 @@ class DatabaseManager:
             # Execute the query
             cursor.execute(query, params)
             
-            # Fetch results if requested
+            # Handle results based on query type
             if fetch:
+                # For SELECT queries, fetch all results
                 result = cursor.fetchall()
             else:
-                # For non-fetch queries, return True to indicate success
-                result = True
+                # For INSERT/UPDATE/DELETE without RETURNING
+                # Check if this is a query with RETURNING clause
+                if "RETURNING" in query.upper():
+                    # Fetch the returned data
+                    result = cursor.fetchall()
+                else:
+                    # Return number of affected rows
+                    result = cursor.rowcount
             
-            # Commit if requested and query was successful
-            if commit and not fetch:
-                conn.commit()
-            elif commit and fetch and query.strip().upper().startswith(('INSERT', 'UPDATE', 'DELETE')):
-                # Also commit for INSERT/UPDATE/DELETE queries that return data (RETURNING clause)
+            # Commit if requested
+            if commit:
                 conn.commit()
             
             return result
@@ -244,7 +248,7 @@ class DatabaseManager:
         for i, query in enumerate(schema_queries):
             try:
                 result = self.execute_query(query, fetch=False, commit=True)
-                if result:
+                if result is not None:
                     success_count += 1
                     print(f"Schema step {i+1}/{len(schema_queries)} completed")
                 else:
@@ -283,7 +287,7 @@ def save_cv(db_manager, user_id, cv_name, cv_text):
                 commit=True
             )
             
-            if result:
+            if result is not None and result > 0:
                 return True, cv_id
             else:
                 return False, None
@@ -300,7 +304,7 @@ def save_cv(db_manager, user_id, cv_name, cv_text):
                 commit=True
             )
             
-            if result:
+            if result is not None and result > 0:
                 return True, cv_id
             else:
                 return False, None
@@ -373,7 +377,7 @@ def save_job_description(db_manager, user_id, job_title, company, description_te
             commit=True
         )
         
-        if result:
+        if result is not None and result > 0:
             return True, job_description_id
         else:
             return False, None
@@ -402,7 +406,7 @@ def save_analysis_result(db_manager, user_id, cv_id, job_description_id, match_s
             commit=True
         )
         
-        if result:
+        if result is not None and result > 0:
             return True, analysis_id
         else:
             return False, None
@@ -483,7 +487,7 @@ def update_cv_parsed_data(db_manager, cv_id, parsed_data):
             fetch=False,
             commit=True
         )
-        return result is not None
+        return result is not None and result > 0
     except Exception as e:
         print(f"Failed to update CV parsed data: {str(e)}")
         import traceback
@@ -507,7 +511,7 @@ def log_token_usage(db_manager, user_id, request_type, tokens_used):
             fetch=False,
             commit=True
         )
-        return result is not None
+        return result is not None and result > 0
     except Exception as e:
         print(f"Failed to log token usage: {str(e)}")
         import traceback
