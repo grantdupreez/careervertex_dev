@@ -392,10 +392,41 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
             if st.button("Subscribe Now", type="primary", use_container_width=True):
                 try:
                     with st.spinner("Creating checkout session..."):
-                        checkout_session = create_stripe_checkout_session(
-                            user_data['user_id'],
-                            user_data['email']
-                        )
+                        # Try to use secure session-based checkout
+                        try:
+                            from payment_manager import create_stripe_checkout_session_secure
+                            
+                            # Check if payment_sessions table exists
+                            table_check = db_manager.execute_query(
+                                """
+                                SELECT EXISTS (
+                                    SELECT FROM information_schema.tables 
+                                    WHERE table_name = 'payment_sessions'
+                                )
+                                """
+                            )
+                            
+                            if table_check and table_check[0]['exists']:
+                                # Use secure session-based checkout
+                                checkout_session = create_stripe_checkout_session_secure(
+                                    db_manager,
+                                    user_data['user_id'],
+                                    user_data['email']
+                                )
+                            else:
+                                # Fall back to standard checkout
+                                from payment_manager import create_stripe_checkout_session
+                                checkout_session = create_stripe_checkout_session(
+                                    user_data['user_id'],
+                                    user_data['email']
+                                )
+                        except ImportError:
+                            # If secure function doesn't exist, use standard
+                            from payment_manager import create_stripe_checkout_session
+                            checkout_session = create_stripe_checkout_session(
+                                user_data['user_id'],
+                                user_data['email']
+                            )
                         
                         if checkout_session and checkout_session.url:
                             # Show the checkout link directly
