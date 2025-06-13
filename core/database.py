@@ -64,8 +64,32 @@ class DatabaseManager:
         finally:
             conn.close()
     
+    def get_existing_tables(self):
+        """Get list of existing tables in the database."""
+        query = """
+            SELECT tablename FROM pg_tables 
+            WHERE schemaname = 'public'
+        """
+        result = self.execute(query)
+        if result:
+            return [row['tablename'] for row in result]
+        return []
+    
     def initialize_schema(self):
         """Initialize database schema."""
+        if not self.connection_params:
+            print("Cannot initialize schema: no connection parameters")
+            return False
+        
+        # First check if tables already exist
+        existing_tables = self.get_existing_tables()
+        required_tables = ['users', 'cvs', 'analyses', 'payments']
+        
+        # If all tables exist, we're good
+        if all(table in existing_tables for table in required_tables):
+            print("All required tables already exist")
+            return True
+        
         schema_queries = [
             # Users table
             """
@@ -125,23 +149,25 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_cvs_user ON cvs(user_id)"
         ]
         
+        failed_queries = []
         for query in schema_queries:
             result = self.execute(query, fetch=False)
             if result is None:
-                return False
+                # Extract table name from query for better error reporting
+                if "CREATE TABLE" in query:
+                    table_name = query.split("CREATE TABLE IF NOT EXISTS ")[1].split(" ")[0]
+                    failed_queries.append(f"Table: {table_name}")
+                elif "CREATE INDEX" in query:
+                    index_name = query.split("CREATE INDEX IF NOT EXISTS ")[1].split(" ")[0]
+                    failed_queries.append(f"Index: {index_name}")
+                else:
+                    failed_queries.append("Unknown query")
+        
+        if failed_queries:
+            print(f"Failed to create: {', '.join(failed_queries)}")
+            return False
         
         return True
-    
-    def get_existing_tables(self):
-        """Get list of existing tables in the database."""
-        query = """
-            SELECT tablename FROM pg_tables 
-            WHERE schemaname = 'public'
-        """
-        result = self.execute(query)
-        if result:
-            return [row['tablename'] for row in result]
-        return []
     
     # User operations
     def create_user(self, email, password_hash, full_name):
