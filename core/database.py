@@ -132,6 +132,17 @@ class DatabaseManager:
         
         return True
     
+    def get_existing_tables(self):
+        """Get list of existing tables in the database."""
+        query = """
+            SELECT tablename FROM pg_tables 
+            WHERE schemaname = 'public'
+        """
+        result = self.execute(query)
+        if result:
+            return [row['tablename'] for row in result]
+        return []
+    
     # User operations
     def create_user(self, email, password_hash, full_name):
         """Create a new user."""
