@@ -345,3 +345,21 @@ def log_token_usage(db_manager, user_id, request_type, tokens_used):
     except Exception as e:
         print(f"Failed to log token usage: {str(e)}")
         return False
+
+def add_session_table_schema():
+    """Add payment sessions table to track Stripe checkout sessions"""
+    return """
+    CREATE TABLE IF NOT EXISTS payment_sessions (
+        session_id UUID PRIMARY KEY,
+        user_id UUID REFERENCES users(user_id),
+        stripe_session_id VARCHAR(255) UNIQUE,
+        session_data JSONB,
+        status VARCHAR(50) DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT NOW(),
+        expires_at TIMESTAMP,
+        completed_at TIMESTAMP
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_payment_sessions_stripe_id ON payment_sessions(stripe_session_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_sessions_expires ON payment_sessions(expires_at);
+    """
