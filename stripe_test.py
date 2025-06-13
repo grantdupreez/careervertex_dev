@@ -19,15 +19,40 @@ if 'checkout_url' in st.session_state and st.session_state['checkout_url']:
     checkout_url = st.session_state['checkout_url']
     del st.session_state['checkout_url']
     
-    st.info("Redirecting to Stripe checkout...")
+    st.warning("⚠️ Automatic redirect to Stripe checkout...")
+    st.markdown(f"### [👉 Click here to proceed to Stripe Checkout]({checkout_url})")
     
-    # JavaScript redirect
+    # Try multiple redirect methods
+    st.markdown("If you're not redirected automatically, click the link above.")
+    
+    # Method 1: Meta refresh
+    st.markdown(
+        f'<meta http-equiv="refresh" content="0;URL={checkout_url}">',
+        unsafe_allow_html=True
+    )
+    
+    # Method 2: JavaScript redirect with delay
     redirect_script = f"""
     <script>
-    window.location.href = "{checkout_url}";
+    setTimeout(function() {{
+        window.location.href = "{checkout_url}";
+    }}, 100);
     </script>
     """
-    components.html(redirect_script, height=0)
+    st.markdown(redirect_script, unsafe_allow_html=True)
+    
+    # Method 3: Using components.html with more height
+    components.html(
+        f"""
+        <script>
+        window.parent.location.href = "{checkout_url}";
+        </script>
+        <p>Redirecting to Stripe checkout...</p>
+        <p>If you're not redirected, <a href="{checkout_url}" target="_top">click here</a>.</p>
+        """,
+        height=100
+    )
+    
     st.stop()
 
 # Check for success/cancel in URL params
@@ -163,16 +188,36 @@ with col2:
                     
                     st.success("✅ Checkout session created!")
                     st.write(f"Session ID: {checkout_session.id}")
-                    st.write(f"Checkout URL: {checkout_session.url}")
                     
-                    # Store URL for redirect
-                    st.session_state['checkout_url'] = checkout_session.url
+                    # Method 1: Direct link button (most reliable)
+                    st.markdown(f"### [🛒 Go to Stripe Checkout]({checkout_session.url})")
+                    st.info("Click the link above to proceed to payment")
                     
-                    # Show manual link as backup
-                    st.markdown(f"[Click here if not redirected automatically]({checkout_session.url})")
+                    # Method 2: Alternative button approach
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown(f"""
+                        <a href="{checkout_session.url}" target="_blank">
+                            <button style="
+                                background-color: #635BFF;
+                                color: white;
+                                padding: 10px 20px;
+                                border: none;
+                                border-radius: 5px;
+                                cursor: pointer;
+                                font-size: 16px;
+                            ">Open Stripe Checkout</button>
+                        </a>
+                        """, unsafe_allow_html=True)
                     
-                    # Trigger rerun for redirect
-                    st.rerun()
+                    # Show the URL for manual copy if needed
+                    with st.expander("Show checkout URL (for manual copy)"):
+                        st.code(checkout_session.url)
+                    
+                    # Optional: Still try automatic redirect
+                    if st.checkbox("Try automatic redirect (experimental)"):
+                        st.session_state['checkout_url'] = checkout_session.url
+                        st.rerun()
                     
             except Exception as e:
                 st.error(f"❌ Error creating checkout session: {str(e)}")
