@@ -26,22 +26,39 @@ class AuthManager:
             password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
             
             # Generate user ID
-            user_id = uuid.uuid4()
+            user_id = str(uuid.uuid4())
             
-            # Insert user into database
-            self.db_manager.execute_query(
+            # Insert user into database with explicit commit
+            result = self.db_manager.execute_query(
                 """
                 INSERT INTO users (user_id, email, password_hash, full_name, created_at)
                 VALUES (%s, %s, %s, %s, %s)
                 """,
                 (user_id, email, password_hash, full_name, datetime.now()),
-                fetch=False
+                fetch=False,
+                commit=True
             )
             
-            return True, str(user_id)
+            # Check if the insertion was successful
+            if result is None:
+                return False, "Failed to create user account. Database error."
+            
+            # Verify the user was created
+            verify_user = self.db_manager.execute_query(
+                "SELECT user_id FROM users WHERE email = %s",
+                (email,)
+            )
+            
+            if verify_user:
+                return True, user_id
+            else:
+                return False, "User creation could not be verified."
+                
         except Exception as e:
             print(f"Failed to register user: {str(e)}")
-            return False, "Registration failed. Please try again."
+            import traceback
+            traceback.print_exc()
+            return False, f"Registration failed: {str(e)}"
     
     def login_user(self, email, password):
         """Login a user and return user data if successful."""
