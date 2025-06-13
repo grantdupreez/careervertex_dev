@@ -3,6 +3,7 @@ import psycopg2
 from psycopg2.extras import Json, DictCursor
 import uuid
 from datetime import datetime
+import traceback
 
 class DatabaseManager:
     """Simplified database manager for CareerVertex."""
@@ -57,12 +58,25 @@ class DatabaseManager:
             conn.rollback()
             print(f"Query error: {e}")
             print(f"Query: {query[:100]}...")
-            print(f"Params: {params}")
-            import traceback
+            if params:
+                print(f"Params: {params}")
             traceback.print_exc()
+            
+            # Return None instead of raising to match debug behavior
             return None
         finally:
             conn.close()
+    
+    def table_exists(self, table_name):
+        """Check if a table exists."""
+        query = """
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = %s
+            )
+        """
+        result = self.execute(query, (table_name,))
+        return result[0]['exists'] if result else False
     
     def get_existing_tables(self):
         """Get list of existing tables in the database."""
@@ -75,110 +89,133 @@ class DatabaseManager:
             return [row['tablename'] for row in result]
         return []
     
-    def initialize_schema(self):
-        """Initialize database schema."""
-        if not self.connection_params:
-            print("Cannot initialize schema: no connection parameters")
-            return False
+    def create_tables_if_needed(self):
+        """Create tables if they don't exist - simplified version."""
+        tables_created = 0
+        tables_checked = 0
         
-        # First check if tables already exist
-        existing_tables = self.get_existing_tables()
-        required_tables = ['users', 'cvs', 'analyses', 'payments']
+        # Define tables in order of dependency
+        table_definitions = [
+            ('users', """
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id UUID PRIMARY KEY,
+                    email VARCHAR(255) UNIQUE NOT NULL,
+                    password_hash VARCHAR(255) NOT NULL,
+                    full_name VARCHAR(255),
+                    subscription_status VARCHAR(50) DEFAULT 'inactive',
+                    subscription_start TIMESTAMP,
+                    subscription_end TIMESTAMP,
+                    stripe_customer_id VARCHAR(255),
+                    stripe_subscription_id VARCHAR(255),
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    last_login TIMESTAMP,
+                    login_token VARCHAR(255),
+                    token_expires TIMESTAMP
+                )
+            """),
+            ('cvs', """
+                CREATE TABLE IF NOT EXISTS cvs (
+                    cv_id UUID PRIMARY KEY,
+                    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+                    cv_name VARCHAR(255) NOT NULL,
+                    cv_text TEXT,
+                    parsed_data JSONB,
+                    uploaded_at TIMESTAMP DEFAULT NOW()
+                )
+            """),
+            ('analyses', """
+                CREATE TABLE IF NOT EXISTS analyses (
+                    analysis_id UUID PRIMARY KEY,
+                    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+                    cv_id UUID REFERENCES cvs(cv_id) ON DELETE CASCADE,
+                    job_title VARCHAR(255),
+                    company VARCHAR(255),
+                    job_description TEXT,
+                    parsed_job JSONB,
+                    analysis_result JSONB,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """),
+            ('payments', """
+                CREATE TABLE IF NOT EXISTS payments (
+                    payment_id UUID PRIMARY KEY,
+                    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+                    stripe_session_id VARCHAR(255),
+                    amount DECIMAL(10, 2),
+                    status VARCHAR(50),
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """),
+            # Also create job_descriptions and token_usage tables that might be referenced
+            ('job_descriptions', """
+                CREATE TABLE IF NOT EXISTS job_descriptions (
+                    job_id UUID PRIMARY KEY,
+                    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+                    job_title VARCHAR(255),
+                    company VARCHAR(255),
+                    job_description TEXT,
+                    parsed_data JSONB,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """),
+            ('token_usage', """
+                CREATE TABLE IF NOT EXISTS token_usage (
+                    usage_id UUID PRIMARY KEY,
+                    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+                    tokens_used INTEGER,
+                    operation VARCHAR(50),
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+        ]
         
-        # If all tables exist, we're good
-        if all(table in existing_tables for table in required_tables):
-            print("All required tables already exist")
-            return True
+        # Create each table
+        for table_name, create_query in table_definitions:
+            tables_checked += 1
+            
+            # Check if table exists first
+            if not self.table_exists(table_name):
+                print(f"Creating table: {table_name}")
+                result = self.execute(create_query, fetch=False)
+                if result is not None:
+                    tables_created += 1
+                    print(f"✓ Created table: {table_name}")
+                else:
+                    print(f"✗ Failed to create table: {table_name}")
+            else:
+                print(f"✓ Table already exists: {table_name}")
         
-        schema_queries = [
-            # Users table
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                user_id UUID PRIMARY KEY,
-                email VARCHAR(255) UNIQUE NOT NULL,
-                password_hash VARCHAR(255) NOT NULL,
-                full_name VARCHAR(255),
-                subscription_status VARCHAR(50) DEFAULT 'inactive',
-                subscription_end TIMESTAMP,
-                stripe_customer_id VARCHAR(255),
-                created_at TIMESTAMP DEFAULT NOW(),
-                login_token VARCHAR(255),
-                token_expires TIMESTAMP
-            )
-            """,
-            # CVs table
-            """
-            CREATE TABLE IF NOT EXISTS cvs (
-                cv_id UUID PRIMARY KEY,
-                user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
-                cv_name VARCHAR(255) NOT NULL,
-                cv_text TEXT,
-                parsed_data JSONB,
-                uploaded_at TIMESTAMP DEFAULT NOW()
-            )
-            """,
-            # Analyses table
-            """
-            CREATE TABLE IF NOT EXISTS analyses (
-                analysis_id UUID PRIMARY KEY,
-                user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
-                cv_id UUID REFERENCES cvs(cv_id) ON DELETE CASCADE,
-                job_title VARCHAR(255),
-                company VARCHAR(255),
-                job_description TEXT,
-                parsed_job JSONB,
-                analysis_result JSONB,
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-            """,
-            # Payments table
-            """
-            CREATE TABLE IF NOT EXISTS payments (
-                payment_id UUID PRIMARY KEY,
-                user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
-                stripe_session_id VARCHAR(255),
-                amount DECIMAL(10, 2),
-                status VARCHAR(50),
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-            """,
-            # Create indexes
+        # Create indexes
+        index_queries = [
             "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
             "CREATE INDEX IF NOT EXISTS idx_users_token ON users(login_token)",
             "CREATE INDEX IF NOT EXISTS idx_analyses_user ON analyses(user_id)",
             "CREATE INDEX IF NOT EXISTS idx_cvs_user ON cvs(user_id)"
         ]
         
-        failed_queries = []
-        for query in schema_queries:
-            result = self.execute(query, fetch=False)
-            if result is None:
-                # Extract table name from query for better error reporting
-                if "CREATE TABLE" in query:
-                    table_name = query.split("CREATE TABLE IF NOT EXISTS ")[1].split(" ")[0]
-                    failed_queries.append(f"Table: {table_name}")
-                elif "CREATE INDEX" in query:
-                    index_name = query.split("CREATE INDEX IF NOT EXISTS ")[1].split(" ")[0]
-                    failed_queries.append(f"Index: {index_name}")
-                else:
-                    failed_queries.append("Unknown query")
+        for index_query in index_queries:
+            self.execute(index_query, fetch=False)
         
-        if failed_queries:
-            print(f"Failed to create: {', '.join(failed_queries)}")
-            return False
-        
-        return True
+        return tables_created, tables_checked
+    
+    def initialize_schema(self):
+        """Initialize database schema - wrapper for compatibility."""
+        tables_created, tables_checked = self.create_tables_if_needed()
+        # Return True if all tables exist (either created or already existed)
+        existing_tables = self.get_existing_tables()
+        required_tables = ['users', 'cvs', 'analyses', 'payments']
+        return all(table in existing_tables for table in required_tables)
     
     # User operations
     def create_user(self, email, password_hash, full_name):
         """Create a new user."""
         user_id = str(uuid.uuid4())
         query = """
-            INSERT INTO users (user_id, email, password_hash, full_name)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO users (user_id, email, password_hash, full_name, created_at)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING user_id
         """
-        result = self.execute(query, (user_id, email.lower(), password_hash, full_name))
+        result = self.execute(query, (user_id, email.lower(), password_hash, full_name, datetime.now()))
         return result[0]['user_id'] if result else None
     
     def get_user_by_email(self, email):
@@ -199,7 +236,11 @@ class DatabaseManager:
             UPDATE users 
             SET subscription_status = %s, 
                 subscription_end = %s,
-                stripe_customer_id = %s
+                stripe_customer_id = %s,
+                subscription_start = CASE 
+                    WHEN subscription_start IS NULL THEN NOW() 
+                    ELSE subscription_start 
+                END
             WHERE user_id = %s
         """
         return self.execute(query, (status, end_date, stripe_customer_id, user_id), fetch=False)
