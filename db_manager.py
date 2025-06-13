@@ -56,6 +56,7 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             if not conn:
+                print("Failed to get database connection")
                 return None
                 
             with conn.cursor(cursor_factory=DictCursor) as cur:
@@ -67,11 +68,16 @@ class DatabaseManager:
                 if commit:
                     conn.commit()
                     
-                return result
+                return result if fetch else True
+                
         except Exception as e:
             if conn:
                 conn.rollback()
             print(f"Database query execution failed: {str(e)}")
+            print(f"Query: {query}")
+            print(f"Params: {params}")
+            import traceback
+            traceback.print_exc()
             return None
         finally:
             if conn:
