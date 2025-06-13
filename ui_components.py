@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import altair as alt
 from datetime import datetime
@@ -252,7 +253,7 @@ def display_user_profile(user_data):
     
     st.markdown('</div>', unsafe_allow_html=True)
 
-def display_pricing():
+def display_pricing(button_key_suffix=""):
     """Display pricing information and subscription button."""
     st.markdown("## Subscription")
     
@@ -271,21 +272,35 @@ def display_pricing():
     st.markdown('<div class="feature-item"><i>✓</i> Interview preparation tips</div>', unsafe_allow_html=True)
     st.markdown('<div class="feature-item"><i>✓</i> Comprehensive reports</div>', unsafe_allow_html=True)
     
-    # Subscribe button
+    # Subscribe button with unique key
     if 'user_id' in st.session_state and 'user_email' in st.session_state:
-        if st.button("Subscribe Now", use_container_width=True, type="primary"):
+        button_key = f"subscribe_pricing{button_key_suffix}"
+        if st.button("Subscribe Now", use_container_width=True, type="primary", key=button_key):
             try:
-                checkout_session = create_stripe_checkout_session(
-                    st.session_state['user_id'],
-                    st.session_state['user_email']
-                )
-                
-                if checkout_session:
-                    st.session_state['checkout_url'] = checkout_session.url
-                    st.success("Redirecting to payment page...")
-                    st.markdown(f'<meta http-equiv="refresh" content="2;URL=\'{checkout_session.url}\'">', unsafe_allow_html=True)
+                with st.spinner("Creating checkout session..."):
+                    checkout_session = create_stripe_checkout_session(
+                        st.session_state['user_id'],
+                        st.session_state['user_email']
+                    )
+                    
+                    if checkout_session and checkout_session.url:
+                        st.session_state['checkout_url'] = checkout_session.url
+                        st.success("Redirecting to payment page...")
+                        
+                        # JavaScript redirect
+                        redirect_script = f"""
+                        <script>
+                        window.location.href = "{checkout_session.url}";
+                        </script>
+                        """
+                        components.html(redirect_script, height=0)
+                        st.stop()
+                    else:
+                        st.error("Failed to create checkout session. Please try again.")
+                        st.info("If this problem persists, please contact support.")
             except Exception as e:
-                st.error("Failed to create checkout session. Please try again.")
+                st.error(f"Failed to create checkout session: {str(e)}")
+                print(f"Stripe checkout error in display_pricing: {str(e)}")
     else:
         st.info("Please log in to subscribe.")
     
