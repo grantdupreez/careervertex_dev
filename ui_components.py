@@ -284,17 +284,25 @@ def display_pricing(button_key_suffix=""):
                     )
                     
                     if checkout_session and checkout_session.url:
-                        st.session_state['checkout_url'] = checkout_session.url
-                        st.success("Redirecting to payment page...")
+                        # Display the checkout link directly
+                        st.success("✅ Checkout session created!")
+                        st.markdown(f"### [🛒 Click here to proceed to payment]({checkout_session.url})")
+                        st.info("Click the link above to complete your subscription")
                         
-                        # JavaScript redirect
-                        redirect_script = f"""
-                        <script>
-                        window.location.href = "{checkout_session.url}";
-                        </script>
-                        """
-                        components.html(redirect_script, height=0)
-                        st.stop()
+                        # Also show as a button
+                        st.markdown(f"""
+                        <div style="text-align: center; margin: 20px;">
+                            <a href="{checkout_session.url}" target="_blank" style="
+                                background-color: #B8860B;
+                                color: white;
+                                padding: 12px 30px;
+                                text-decoration: none;
+                                border-radius: 5px;
+                                font-weight: bold;
+                                display: inline-block;
+                            ">Complete Payment on Stripe</a>
+                        </div>
+                        """, unsafe_allow_html=True)
                     else:
                         st.error("Failed to create checkout session. Please try again.")
                         st.info("If this problem persists, please contact support.")
