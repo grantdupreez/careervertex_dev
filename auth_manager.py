@@ -3,6 +3,7 @@ import uuid
 import bcrypt
 import hmac
 from datetime import datetime
+import traceback
 
 class AuthManager:
     """Manages user authentication and registration."""
@@ -12,83 +13,119 @@ class AuthManager:
     
     def register_user(self, email, password, full_name):
         """Register a new user."""
+        # Validate inputs
+        if not email or not password:
+            return False, "Email and password are required."
+        
+        if not self.db_manager or not self.db_manager.connection_params:
+            return False, "Database connection not available."
+        
         try:
             # Check if user already exists
             existing_user = self.db_manager.execute_query(
-                "SELECT * FROM users WHERE email = %s",
-                (email,)
+                "SELECT user_id FROM users WHERE email = %s",
+                (email.lower().strip(),)  # Normalize email
             )
             
-            if existing_user:
+            if existing_user and len(existing_user) > 0:
                 return False, "User with this email already exists."
-                
-            # Hash the password
-            password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
             
             # Generate user ID
             user_id = str(uuid.uuid4())
             
-            # Insert user into database with explicit commit
+            # Hash the password
+            password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            
+            # Insert user into database
             result = self.db_manager.execute_query(
                 """
                 INSERT INTO users (user_id, email, password_hash, full_name, created_at)
                 VALUES (%s, %s, %s, %s, %s)
                 """,
-                (user_id, email, password_hash, full_name, datetime.now()),
+                (user_id, email.lower().strip(), password_hash, full_name, datetime.now()),
                 fetch=False,
                 commit=True
             )
             
-            # Check if the insertion was successful
-            if result is None:
-                return False, "Failed to create user account. Database error."
-            
-            # Verify the user was created
-            verify_user = self.db_manager.execute_query(
-                "SELECT user_id FROM users WHERE email = %s",
-                (email,)
-            )
-            
-            if verify_user:
-                return True, user_id
-            else:
-                return False, "User creation could not be verified."
+            if result:
+                # Verify the user was created
+                verify_user = self.db_manager.execute_query(
+                    "SELECT user_id FROM users WHERE user_id = %s",
+                    (user_id,)
+                )
                 
+                if verify_user and len(verify_user) > 0:
+                    print(f"User registered successfully: {email}")
+                    return True, user_id
+                else:
+                    print("User creation verification failed")
+                    return False, "User creation could not be verified."
+            else:
+                print("Insert query returned None/False")
+                return False, "Failed to create user account."
+                
+        except psycopg2.IntegrityError as e:
+            # Handle specific database constraints
+            if "users_email_key" in str(e):
+                return False, "Email address already registered."
+            else:
+                print(f"Integrity error during registration: {str(e)}")
+                return False, "Registration failed due to data conflict."
         except Exception as e:
             print(f"Failed to register user: {str(e)}")
-            import traceback
             traceback.print_exc()
             return False, f"Registration failed: {str(e)}"
     
     def login_user(self, email, password):
         """Login a user and return user data if successful."""
+        # Validate inputs
+        if not email or not password:
+            return False, "Email and password are required."
+        
+        if not self.db_manager or not self.db_manager.connection_params:
+            return False, "Database connection not available."
+        
         try:
             # Fetch user from database
             user_data = self.db_manager.execute_query(
                 "SELECT * FROM users WHERE email = %s",
-                (email,)
+                (email.lower().strip(),)  # Normalize email
             )
             
-            if not user_data:
-                return False, "User not found."
-                
+            if not user_data or len(user_data) == 0:
+                return False, "Invalid email or password."
+            
             user = user_data[0]
             
             # Check password
-            if not bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
-                return False, "Incorrect password."
+            try:
+                password_valid = bcrypt.checkpw(
+                    password.encode('utf-8'), 
+                    user['password_hash'].encode('utf-8')
+                )
                 
+                if not password_valid:
+                    return False, "Invalid email or password."
+            except Exception as e:
+                print(f"Password verification error: {str(e)}")
+                return False, "Authentication error. Please try again."
+            
             # Update last login time
             self.db_manager.execute_query(
                 "UPDATE users SET last_login = %s WHERE user_id = %s",
                 (datetime.now(), user['user_id']),
-                fetch=False
+                fetch=False,
+                commit=True
             )
             
-            # Return user data
-            return True, dict(user)
+            # Return user data as dict
+            user_dict = dict(user)
+            print(f"User logged in successfully: {email}")
+            return True, user_dict
+            
         except Exception as e:
             print(f"Failed to login user: {str(e)}")
+            traceback.print_exc()
             return False, "Login failed. Please try again."
     
     def check_admin_password(self):
@@ -130,6 +167,10 @@ class AuthManager:
     
     def check_subscription(self, user_id):
         """Check if user has an active subscription."""
+        if not self.db_manager or not self.db_manager.connection_params:
+            print("Database connection not available for subscription check")
+            return False
+        
         try:
             user_data = self.db_manager.execute_query(
                 """
@@ -140,45 +181,67 @@ class AuthManager:
                 (user_id,)
             )
             
-            if not user_data:
+            if not user_data or len(user_data) == 0:
                 return False
-                
+            
             user = user_data[0]
             
             # Check if subscription is active and not expired
-            if user['subscription_status'] == 'active' and user['subscription_end'] > datetime.now():
+            if user['subscription_status'] == 'active' and user['subscription_end'] and user['subscription_end'] > datetime.now():
                 return True
             else:
                 # Update status to expired if past end date
-                if user['subscription_status'] == 'active' and user['subscription_end'] <= datetime.now():
+                if user['subscription_status'] == 'active' and user['subscription_end'] and user['subscription_end'] <= datetime.now():
                     self.db_manager.execute_query(
                         "UPDATE users SET subscription_status = 'expired' WHERE user_id = %s",
                         (user_id,),
-                        fetch=False
+                        fetch=False,
+                        commit=True
                     )
                 return False
         except Exception as e:
             print(f"Failed to check subscription: {str(e)}")
+            traceback.print_exc()
             return False
     
     def get_user_data(self, user_id):
         """Get user data by ID."""
+        if not self.db_manager or not self.db_manager.connection_params:
+            print("Database connection not available for get_user_data")
+            return None
+        
         try:
             user_data = self.db_manager.execute_query(
                 "SELECT * FROM users WHERE user_id = %s",
                 (user_id,)
             )
             
-            if not user_data:
+            if not user_data or len(user_data) == 0:
                 return None
                 
             return dict(user_data[0])
         except Exception as e:
             print(f"Failed to get user data: {str(e)}")
+            traceback.print_exc()
             return None
     
     def logout_user(self):
         """Logout the current user."""
-        for key in ['user_id', 'user_email', 'user_name', 'user_data']:
+        # Clear all user-related session state
+        keys_to_remove = ['user_id', 'user_email', 'user_name', 'user_data', 
+                         'current_analysis_id', 'selected_cv_id', 'show_analysis_tab']
+        
+        for key in keys_to_remove:
             if key in st.session_state:
                 del st.session_state[key]
+        
+        print("User logged out successfully")
+
+# Import psycopg2 for exception handling
+try:
+    import psycopg2
+except ImportError:
+    # Create a dummy class if psycopg2 is not available
+    class psycopg2:
+        class IntegrityError(Exception):
+            pass
