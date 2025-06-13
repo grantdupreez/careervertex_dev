@@ -1,10 +1,10 @@
 import streamlit as st
 import stripe
 import uuid
-import traceback
 from datetime import datetime, timedelta
 from psycopg2.extras import Json
 import time
+import traceback
 
 def init_stripe():
     """Initialize Stripe with API key."""
@@ -20,26 +20,23 @@ def init_stripe():
         print(f"ERROR: Failed to initialize Stripe: {str(e)}")
         return False
 
-def create_checkout_session_with_metadata(db_manager, user_id, email):
-    """Create a Stripe checkout session with enhanced metadata for better recovery."""
+def create_checkout_session(db_manager, user_id, email):
+    """Create a simple Stripe checkout session that opens in a new tab."""
     try:
         if not init_stripe():
-            return None, "Stripe configuration missing"
+            return None, "Stripe not configured"
         
         # Validate inputs
         if not user_id or not email:
-            return None, "Missing user_id or email"
+            return None, "Missing user information"
         
         # Check for required secrets
         if "STRIPE_PRICE_ID" not in st.secrets:
             return None, "STRIPE_PRICE_ID not configured"
-        if "APP_URL" not in st.secrets:
-            return None, "APP_URL not configured"
-            
-        # Create a unique session token
-        session_token = str(uuid.uuid4())
         
-        # Store session info in database BEFORE creating Stripe session
+        # Create session record in database
+        session_id = str(uuid.uuid4())
+        
         db_result = db_manager.execute_query(
             """
             INSERT INTO payment_sessions 
@@ -47,15 +44,14 @@ def create_checkout_session_with_metadata(db_manager, user_id, email):
             VALUES (%s, %s, %s, %s, %s, %s)
             """,
             (
-                session_token,
+                session_id,
                 user_id,
-                'pending_creation',  # Temporary value
+                'pending_creation',
                 Json({
                     "user_email": email,
-                    "created_at": datetime.now().isoformat(),
-                    "user_id": str(user_id)
+                    "created_at": datetime.now().isoformat()
                 }),
-                datetime.now() + timedelta(hours=1),
+                datetime.now() + timedelta(hours=24),
                 'pending'
             ),
             fetch=False,
@@ -63,36 +59,37 @@ def create_checkout_session_with_metadata(db_manager, user_id, email):
         )
         
         if db_result is None:
-            return None, "Failed to create payment session in database"
+            return None, "Failed to create payment session record"
         
-        # Create Stripe checkout session
+        # Create Stripe checkout session with simple success/cancel URLs
         price_id = st.secrets["STRIPE_PRICE_ID"]
-        app_url = st.secrets["APP_URL"].rstrip('/')
+        
+        # Use simple static URLs for success/cancel
+        success_url = "https://careervertex.com/payment-success"
+        cancel_url = "https://careervertex.com/payment-cancelled"
         
         print(f"Creating checkout for user {user_id}, email {email}")
-        print(f"Success URL: {app_url}?payment_success=true&session_id={{CHECKOUT_SESSION_ID}}&token={session_token}")
         
         checkout_session = stripe.checkout.Session.create(
-            customer_email=email,
-            payment_method_types=["card"],
+            payment_method_types=['card'],
             line_items=[{
-                "price": price_id,
-                "quantity": 1,
+                'price': price_id,
+                'quantity': 1,
             }],
-            mode="subscription",
-            success_url=f"{app_url}?payment_success=true&session_id={{CHECKOUT_SESSION_ID}}&token={session_token}",
-            cancel_url=f"{app_url}?payment_canceled=true",
+            mode='subscription',
+            success_url=success_url,
+            cancel_url=cancel_url,
+            customer_email=email,
             client_reference_id=str(user_id),
             metadata={
                 "user_id": str(user_id),
-                "session_token": session_token,
-                "user_email": email
+                "session_id": session_id
             }
         )
         
         print(f"Checkout session created: {checkout_session.id}")
         
-        # Update the session with the actual Stripe session ID
+        # Update session with Stripe ID
         update_result = db_manager.execute_query(
             """
             UPDATE payment_sessions 
@@ -103,16 +100,13 @@ def create_checkout_session_with_metadata(db_manager, user_id, email):
             (
                 checkout_session.id,
                 Json({"stripe_url": checkout_session.url}),
-                session_token
+                session_id
             ),
             fetch=False,
             commit=True
         )
         
-        if update_result is None:
-            print("WARNING: Failed to update payment session with Stripe ID")
-        
-        return checkout_session, None
+        return checkout_session.url, session_id
         
     except stripe.error.InvalidRequestError as e:
         error_msg = f"Invalid request: {str(e)}"
@@ -123,113 +117,125 @@ def create_checkout_session_with_metadata(db_manager, user_id, email):
     except stripe.error.AuthenticationError as e:
         print(f"Stripe AuthenticationError: {str(e)}")
         return None, "Authentication failed. Please contact support."
-    except stripe.error.StripeError as e:
-        print(f"Stripe API error: {str(e)}")
-        return None, "Payment processing error. Please try again."
     except Exception as e:
         print(f"Unexpected error creating checkout session: {str(e)}")
         traceback.print_exc()
-        return None, "An unexpected error occurred. Please try again."
+        return None, "An unexpected error occurred."
 
-def process_successful_payment_improved(session_id, token, db_manager):
-    """Process payment with better error handling and recovery."""
+def check_payment_status(db_manager, user_id):
+    """Check if user has an active subscription or recent payment."""
     try:
-        if not init_stripe():
-            return False, "Stripe initialization failed", None
-        
-        print(f"Processing payment for session: {session_id}, token: {token}")
-        
-        # First, try to find the session using our token
-        session_info = None
-        if token:
-            session_info = db_manager.execute_query(
-                """
-                SELECT ps.*, u.email, u.full_name 
-                FROM payment_sessions ps
-                JOIN users u ON ps.user_id = u.user_id
-                WHERE ps.session_id = %s
-                """,
-                (token,)
-            )
-            if session_info:
-                print(f"Found session via token for user: {session_info[0]['user_id']}")
-        
-        # If no token or session not found, try with Stripe session ID
-        if not session_info:
-            session_info = db_manager.execute_query(
-                """
-                SELECT ps.*, u.email, u.full_name 
-                FROM payment_sessions ps
-                JOIN users u ON ps.user_id = u.user_id
-                WHERE ps.stripe_session_id = %s
-                """,
-                (session_id,)
-            )
-            if session_info:
-                print(f"Found session via Stripe ID for user: {session_info[0]['user_id']}")
-        
-        # Get Stripe session details
-        checkout_session = stripe.checkout.Session.retrieve(
-            session_id,
-            expand=['customer', 'subscription']
+        # First check if user already has active subscription
+        user_result = db_manager.execute_query(
+            """
+            SELECT subscription_status, subscription_end
+            FROM users
+            WHERE user_id = %s
+            """,
+            (user_id,)
         )
         
-        print(f"Checkout session status: {checkout_session.payment_status}")
+        if user_result:
+            user = user_result[0]
+            if user['subscription_status'] == 'active' and user['subscription_end']:
+                if user['subscription_end'] > datetime.now():
+                    return 'active', None
         
-        # Determine user_id from multiple sources
-        user_id = None
-        user_email = None
-        user_name = None
+        # Check for pending payment sessions
+        pending_sessions = db_manager.execute_query(
+            """
+            SELECT session_id, stripe_session_id, created_at
+            FROM payment_sessions
+            WHERE user_id = %s 
+            AND status = 'pending'
+            AND created_at > NOW() - INTERVAL '24 hours'
+            ORDER BY created_at DESC
+            """,
+            (user_id,)
+        )
         
-        # Priority 1: Our database session
-        if session_info:
-            user_id = session_info[0]['user_id']
-            user_email = session_info[0]['email']
-            user_name = session_info[0].get('full_name')
+        if pending_sessions:
+            return 'pending', pending_sessions[0]
         
-        # Priority 2: Stripe metadata
-        if not user_id and checkout_session.metadata:
-            user_id = checkout_session.metadata.get('user_id')
-            user_email = checkout_session.metadata.get('user_email')
+        return 'none', None
         
-        # Priority 3: Client reference ID
-        if not user_id:
-            user_id = checkout_session.client_reference_id
+    except Exception as e:
+        print(f"Error checking payment status: {str(e)}")
+        return 'error', None
+
+def verify_and_process_payment(db_manager, user_id, stripe_session_id=None):
+    """Verify payment with Stripe and update subscription if paid."""
+    try:
+        if not init_stripe():
+            return False, "Stripe not configured"
         
-        # Priority 4: Email lookup
-        if not user_id and checkout_session.customer_details and checkout_session.customer_details.email:
-            email_lookup = db_manager.execute_query(
-                "SELECT user_id, email, full_name FROM users WHERE email = %s",
-                (checkout_session.customer_details.email,)
+        # If no specific session provided, get all pending sessions for user
+        if stripe_session_id:
+            sessions_to_check = [{'stripe_session_id': stripe_session_id}]
+        else:
+            sessions_to_check = db_manager.execute_query(
+                """
+                SELECT stripe_session_id 
+                FROM payment_sessions 
+                WHERE user_id = %s 
+                AND status = 'pending'
+                AND created_at > NOW() - INTERVAL '24 hours'
+                ORDER BY created_at DESC
+                """,
+                (user_id,)
             )
-            if email_lookup:
-                user_id = email_lookup[0]['user_id']
-                user_email = email_lookup[0]['email']
-                user_name = email_lookup[0].get('full_name')
         
-        if not user_id:
-            print("ERROR: Could not determine user for this payment")
-            return False, "Could not determine user for this payment", None
+        if not sessions_to_check:
+            return False, "No pending payment sessions found"
         
-        print(f"Processing payment for user_id: {user_id}")
+        # Check each session with Stripe
+        for session in sessions_to_check:
+            try:
+                stripe_session = stripe.checkout.Session.retrieve(
+                    session['stripe_session_id'],
+                    expand=['subscription', 'customer']
+                )
+                
+                if stripe_session.payment_status == 'paid':
+                    # Payment successful! Process it
+                    return process_successful_payment(
+                        db_manager, 
+                        user_id, 
+                        stripe_session
+                    )
+                    
+            except stripe.error.InvalidRequestError:
+                # Session not found or invalid, skip it
+                continue
+            except Exception as e:
+                print(f"Error checking session {session['stripe_session_id']}: {str(e)}")
+                continue
         
-        # Process the subscription
-        if checkout_session.payment_status != 'paid':
-            return False, "Payment not completed", {'user_id': user_id, 'email': user_email}
+        return False, "No completed payments found. Please complete your payment and try again."
         
-        subscription = checkout_session.subscription
+    except Exception as e:
+        print(f"Error verifying payment: {str(e)}")
+        traceback.print_exc()
+        return False, f"Error verifying payment: {str(e)}"
+
+def process_successful_payment(db_manager, user_id, stripe_session):
+    """Process a successful payment from Stripe."""
+    try:
+        # Get subscription details
+        subscription = stripe_session.subscription
         if isinstance(subscription, str):
             subscription = stripe.Subscription.retrieve(subscription)
         
         if not subscription:
-            return False, "No subscription found", {'user_id': user_id, 'email': user_email}
+            return False, "No subscription found in payment session"
         
-        # Update user subscription
+        # Calculate subscription period
         subscription_start = datetime.fromtimestamp(subscription.current_period_start)
         subscription_end = datetime.fromtimestamp(subscription.current_period_end)
         
-        print(f"Updating subscription for user {user_id}: {subscription_start} to {subscription_end}")
+        print(f"Processing payment for user {user_id}: {subscription_start} to {subscription_end}")
         
+        # Update user subscription
         update_result = db_manager.execute_query(
             """
             UPDATE users 
@@ -239,12 +245,11 @@ def process_successful_payment_improved(session_id, token, db_manager):
                 stripe_customer_id = %s,
                 stripe_subscription_id = %s
             WHERE user_id = %s
-            RETURNING email, full_name
             """,
             (
                 subscription_start,
                 subscription_end,
-                checkout_session.customer,
+                stripe_session.customer,
                 subscription.id,
                 user_id
             ),
@@ -252,27 +257,26 @@ def process_successful_payment_improved(session_id, token, db_manager):
             commit=True
         )
         
-        if not update_result:
-            print(f"ERROR: Failed to update subscription for user {user_id}")
-            return False, "Failed to update subscription", {'user_id': user_id, 'email': user_email}
+        if update_result is None:
+            return False, "Failed to update subscription"
         
-        # Update payment session
-        if token or session_info:
-            db_manager.execute_query(
-                """
-                UPDATE payment_sessions 
-                SET status = 'completed', completed_at = NOW()
-                WHERE session_id = %s OR stripe_session_id = %s
-                """,
-                (token, session_id),
-                fetch=False,
-                commit=True
-            )
+        # Update payment session status
+        db_manager.execute_query(
+            """
+            UPDATE payment_sessions 
+            SET status = 'completed', 
+                completed_at = NOW()
+            WHERE stripe_session_id = %s
+            """,
+            (stripe_session.id,),
+            fetch=False,
+            commit=True
+        )
         
         # Record payment
         payment_id = str(uuid.uuid4())
-        amount = float(subscription.items.data[0].price.unit_amount) / 100
-        currency = subscription.items.data[0].price.currency.upper()
+        amount = float(stripe_session.amount_total or 0) / 100
+        currency = (stripe_session.currency or 'gbp').upper()
         
         db_manager.execute_query(
             """
@@ -283,199 +287,20 @@ def process_successful_payment_improved(session_id, token, db_manager):
             """,
             (
                 payment_id, user_id, amount, currency,
-                "card", checkout_session.payment_intent or session_id, "completed",
-                datetime.now()
+                'card', stripe_session.payment_intent or stripe_session.id, 
+                'completed', datetime.now()
             ),
             fetch=False,
             commit=True
         )
         
-        # Return success with user info for auto-login
-        user_info = {
-            'user_id': user_id,
-            'email': user_email or (update_result[0]['email'] if update_result else None),
-            'full_name': user_name or (update_result[0].get('full_name') if update_result else None)
-        }
-        
         print(f"Payment processed successfully for user {user_id}")
-        return True, "Subscription activated successfully!", user_info
+        return True, "Payment verified! Your subscription is now active."
         
     except Exception as e:
-        print(f"ERROR in process_successful_payment_improved: {str(e)}")
+        print(f"Error processing payment: {str(e)}")
         traceback.print_exc()
-        return False, f"Error processing payment: {str(e)}", None
-
-def show_checkout_ui(checkout_session):
-    """Display a clean, single checkout UI without duplicates."""
-    st.success("✅ Checkout session created successfully!")
-    
-    # Single, prominent button
-    st.markdown("""
-    <style>
-    .checkout-container {
-        text-align: center;
-        padding: 2rem;
-        background: linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%);
-        border-radius: 10px;
-        margin: 2rem 0;
-    }
-    .checkout-button {
-        background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
-        color: #0D1117;
-        padding: 1rem 3rem;
-        text-decoration: none;
-        border-radius: 5px;
-        font-weight: bold;
-        font-size: 1.2rem;
-        display: inline-block;
-        box-shadow: 0 5px 15px rgba(184, 134, 11, 0.3);
-        transition: all 0.3s ease;
-    }
-    .checkout-button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 7px 20px rgba(184, 134, 11, 0.4);
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    st.markdown(f"""
-    <div class="checkout-container">
-        <h3>Ready to complete your subscription?</h3>
-        <p>Click the button below to proceed to Stripe's secure checkout</p>
-        <a href="{checkout_session.url}" target="_self" class="checkout-button">
-            Complete Payment →
-        </a>
-        <p style="margin-top: 1rem; color: #666; font-size: 0.9rem;">
-            You'll be redirected back here after payment
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Optional: Show session details in an expander for debugging
-    with st.expander("Payment Details", expanded=False):
-        st.write(f"**Session ID:** `{checkout_session.id}`")
-        st.write(f"**Amount:** £25.00 / month")
-        st.write("**What happens next:**")
-        st.write("1. Complete payment on Stripe")
-        st.write("2. You'll be redirected back here")
-        st.write("3. Your subscription will be activated automatically")
-
-def handle_payment_return(db_manager, auth_manager):
-    """Handle the return from Stripe payment."""
-    query_params = st.query_params
-    
-    if "payment_success" in query_params and "session_id" in query_params:
-        session_id = query_params["session_id"]
-        token = query_params.get("token", None)
-        
-        # Clear URL params early to prevent reprocessing
-        st.query_params.clear()
-        
-        st.title("Processing Your Payment")
-        
-        # Show processing UI
-        with st.spinner("🔄 Activating your subscription..."):
-            # Add a small delay for better UX
-            time.sleep(1)
-            
-            success, message, user_info = process_successful_payment_improved(
-                session_id, token, db_manager
-            )
-        
-        if success and user_info:
-            st.success("✅ " + message)
-            st.balloons()
-            
-            # Auto-login the user if they're not logged in
-            if 'user_id' not in st.session_state and user_info.get('user_id'):
-                st.session_state['user_id'] = user_info['user_id']
-                st.session_state['user_email'] = user_info.get('email', '')
-                st.session_state['user_name'] = user_info.get('full_name') or user_info.get('email', '')
-                
-                # Get full user data
-                user_data = auth_manager.get_user_data(user_info['user_id'])
-                if user_data:
-                    st.session_state['user_data'] = user_data
-                
-                st.info("You've been automatically logged in!")
-                time.sleep(2)
-                st.rerun()
-            else:
-                # User is already logged in, just refresh
-                st.info("Your subscription is now active!")
-                time.sleep(2)
-                st.rerun()
-        else:
-            # Payment processing failed
-            st.error("❌ " + message)
-            
-            if user_info and user_info.get('user_id'):
-                # We know who the user is, help them
-                st.info("We've identified your account. Let's try to resolve this:")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("🔄 Retry Activation"):
-                        # Retry the activation
-                        with st.spinner("Retrying..."):
-                            success, message, _ = process_successful_payment_improved(
-                                session_id, token, db_manager
-                            )
-                        if success:
-                            st.success("✅ Subscription activated!")
-                            time.sleep(2)
-                            st.rerun()
-                        else:
-                            st.error("Still having issues. Please contact support.")
-                
-                with col2:
-                    if st.button("📧 Contact Support"):
-                        st.info("Please email support@careervertex.com with the following information:")
-                        st.code(f"Session ID: {session_id}\nUser Email: {user_info.get('email', 'Unknown')}")
-            else:
-                # Can't identify user
-                st.warning("Please save this information for support:")
-                st.code(f"Session ID: {session_id}")
-                st.info("Contact support@careervertex.com with this Session ID to resolve the issue.")
-        
-        return True
-    
-    elif "payment_canceled" in query_params:
-        st.warning("Payment was canceled. You can try again whenever you're ready.")
-        st.query_params.clear()
-        return True
-    
-    return False
-
-# Cleanup function for expired sessions
-def cleanup_expired_sessions(db_manager):
-    """Remove expired payment sessions"""
-    try:
-        db_manager.execute_query(
-            """
-            DELETE FROM payment_sessions 
-            WHERE expires_at < NOW() 
-            OR (status = 'completed' AND completed_at < NOW() - INTERVAL '7 days')
-            """,
-            fetch=False,
-            commit=True
-        )
-    except Exception as e:
-        print(f"Error cleaning up sessions: {str(e)}")
-
-# Legacy functions for backward compatibility
-def create_stripe_checkout_session(user_id, email):
-    """Legacy function - redirects to new implementation"""
-    print("WARNING: Using legacy create_stripe_checkout_session")
-    # This requires access to db_manager, which isn't passed here
-    # Return None to force use of new function
-    return None
-
-def handle_successful_payment(session_id, db_manager):
-    """Legacy function - redirects to new implementation"""
-    print("WARNING: Using legacy handle_successful_payment")
-    success, message, user_info = process_successful_payment_improved(session_id, None, db_manager)
-    return success
+        return False, f"Error processing payment: {str(e)}"
 
 def cancel_subscription(user_id, db_manager):
     """Cancel a user's subscription."""
@@ -483,7 +308,7 @@ def cancel_subscription(user_id, db_manager):
         if not init_stripe():
             return False, "Stripe initialization failed"
         
-        # Get user's subscription ID from database
+        # Get user's subscription ID
         user_data = db_manager.execute_query(
             "SELECT stripe_subscription_id FROM users WHERE user_id = %s",
             (user_id,)
@@ -494,7 +319,7 @@ def cancel_subscription(user_id, db_manager):
         
         subscription_id = user_data[0]['stripe_subscription_id']
         
-        # Cancel the subscription at period end
+        # Cancel at period end
         subscription = stripe.Subscription.modify(
             subscription_id,
             cancel_at_period_end=True
@@ -520,45 +345,191 @@ def cancel_subscription(user_id, db_manager):
         print(f"Error cancelling subscription: {str(e)}")
         return False, str(e)
 
-def reactivate_subscription(user_id, db_manager):
-    """Reactivate a cancelled subscription."""
-    try:
-        if not init_stripe():
-            return False, "Stripe initialization failed"
+# UI Components
+
+def show_subscription_ui(db_manager, user_data):
+    """Show subscription UI with new tab checkout."""
+    
+    # Check current status
+    status, session_data = check_payment_status(db_manager, user_data['user_id'])
+    
+    if status == 'active':
+        return True  # Already subscribed
+    
+    elif status == 'pending' and session_data:
+        # Show pending payment UI
+        st.info("⏳ You have a payment in progress...")
         
-        # Get user's subscription ID from database
-        user_data = db_manager.execute_query(
-            "SELECT stripe_subscription_id FROM users WHERE user_id = %s",
-            (user_id,)
-        )
+        time_since = datetime.now() - session_data['created_at'].replace(tzinfo=None)
+        minutes_ago = int(time_since.total_seconds() / 60)
         
-        if not user_data or not user_data[0]['stripe_subscription_id']:
-            return False, "No subscription found"
+        st.write(f"Payment session started {minutes_ago} minutes ago")
         
-        subscription_id = user_data[0]['stripe_subscription_id']
+        col1, col2, col3 = st.columns(3)
         
-        # Reactivate the subscription
-        subscription = stripe.Subscription.modify(
-            subscription_id,
-            cancel_at_period_end=False
-        )
+        with col1:
+            if st.button("✅ I've Completed Payment", type="primary"):
+                with st.spinner("Verifying payment with Stripe..."):
+                    success, message = verify_and_process_payment(
+                        db_manager, 
+                        user_data['user_id'],
+                        session_data['stripe_session_id']
+                    )
+                    
+                    if success:
+                        st.success(message)
+                        st.balloons()
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        st.error(message)
         
-        print(f"Subscription {subscription_id} reactivated")
+        with col2:
+            if st.button("🔄 Check Payment Status"):
+                with st.spinner("Checking..."):
+                    success, message = verify_and_process_payment(
+                        db_manager, 
+                        user_data['user_id'],
+                        session_data['stripe_session_id']
+                    )
+                    
+                    if success:
+                        st.success(message)
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        st.info(message)
         
-        # Update database
-        db_manager.execute_query(
-            """
-            UPDATE users 
-            SET subscription_status = 'active'
-            WHERE user_id = %s
-            """,
-            (user_id,),
-            fetch=False,
-            commit=True
-        )
+        with col3:
+            if st.button("❌ Cancel & Start Over"):
+                # Cancel pending session
+                db_manager.execute_query(
+                    "UPDATE payment_sessions SET status = 'cancelled' WHERE session_id = %s",
+                    (session_data['session_id'],),
+                    fetch=False,
+                    commit=True
+                )
+                st.rerun()
         
-        return True, "Subscription reactivated successfully"
+        return False
+    
+    else:
+        # Show subscription options
+        st.markdown("### 🚀 Subscribe to CareerVertex Pro")
         
-    except Exception as e:
-        print(f"Error reactivating subscription: {str(e)}")
-        return False, str(e)
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            st.markdown("#### What's included:")
+            st.markdown("""
+            ✅ **Unlimited CV analyses** - Analyse as many jobs as you want  
+            ✅ **Store multiple CVs** - Keep different versions for different roles  
+            ✅ **Custom cover letters** - AI-generated for each application  
+            ✅ **Interview prep tips** - Tailored to each job  
+            ✅ **Keyword optimization** - Never miss important keywords  
+            ✅ **Priority support** - Get help when you need it
+            """)
+        
+        with col2:
+            st.markdown("#### Pricing")
+            st.markdown("### £25/month")
+            st.markdown("Cancel anytime")
+            st.markdown("Secure payment via Stripe")
+        
+        st.markdown("---")
+        
+        # Center the subscribe button
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            if st.button("Subscribe Now - £25/month", type="primary", use_container_width=True):
+                with st.spinner("Creating secure checkout session..."):
+                    checkout_url, session_id = create_checkout_session(
+                        db_manager,
+                        user_data['user_id'],
+                        user_data['email']
+                    )
+                    
+                    if checkout_url:
+                        st.success("✅ Checkout session created!")
+                        
+                        # Instructions
+                        st.markdown("""
+                        <div style="text-align: center; padding: 20px; background: #f0f2f5; border-radius: 10px; margin: 20px 0;">
+                            <h3>Complete Your Payment</h3>
+                            <p>Click the button below to open Stripe checkout in a new tab:</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Payment button
+                        st.markdown(f"""
+                        <div style="text-align: center; margin: 20px 0;">
+                            <a href="{checkout_url}" target="_blank" style="
+                                background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
+                                color: #0D1117;
+                                padding: 15px 40px;
+                                text-decoration: none;
+                                border-radius: 5px;
+                                font-weight: bold;
+                                font-size: 18px;
+                                display: inline-block;
+                                box-shadow: 0 5px 15px rgba(184, 134, 11, 0.3);
+                                transition: all 0.3s ease;
+                            ">🔒 Complete Payment in Stripe</a>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Instructions after payment
+                        st.info("📌 **Important:** After completing payment, return to this tab and click the button below:")
+                        
+                        if st.button("✅ I've Completed Payment", type="primary", use_container_width=True):
+                            st.rerun()
+                        
+                    else:
+                        st.error("Failed to create checkout session. Please try again.")
+        
+        # Support section
+        with st.expander("Need help?"):
+            st.markdown("""
+            **Having issues with payment?**
+            
+            1. Make sure pop-ups are enabled for Stripe
+            2. Try a different browser if payment page doesn't load
+            3. Contact support at support@careervertex.com
+            
+            **Common issues:**
+            - Card declined: Check with your bank
+            - Page not loading: Disable ad blockers
+            - Session expired: Click 'Subscribe Now' again
+            """)
+            
+            if st.button("Verify Past Payment"):
+                with st.spinner("Checking for any completed payments..."):
+                    success, message = verify_and_process_payment(
+                        db_manager, 
+                        user_data['user_id']
+                    )
+                    
+                    if success:
+                        st.success(message)
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        st.info(message)
+        
+        return False
+
+# Legacy support functions (for backwards compatibility)
+def handle_payment_return(db_manager, auth_manager):
+    """Legacy function - no longer needed but kept for compatibility."""
+    return False
+
+def create_stripe_checkout_session(user_id, email):
+    """Legacy function - redirects to new implementation."""
+    print("WARNING: Using legacy create_stripe_checkout_session")
+    return None
+
+def handle_successful_payment(session_id, db_manager):
+    """Legacy function - redirects to new implementation."""
+    print("WARNING: Using legacy handle_successful_payment")
+    return False
