@@ -20,20 +20,35 @@ from ui_components import display_user_profile, display_pricing, create_skills_c
 def handle_subscription_redirect():
     """
     Handle Stripe checkout URL redirect properly.
-    This should be called at the beginning of the app to check for pending redirects.
+    Since automatic redirects can be problematic, we'll show a clear link instead.
     """
     if 'checkout_url' in st.session_state and st.session_state['checkout_url']:
         checkout_url = st.session_state['checkout_url']
         # Clear the checkout URL from session state
         del st.session_state['checkout_url']
         
-        # Use JavaScript to redirect to Stripe checkout
-        redirect_script = f"""
-        <script>
-        window.location.href = "{checkout_url}";
-        </script>
-        """
-        components.html(redirect_script, height=0)
+        # Display clear instructions with link
+        st.success("✅ Checkout session created successfully!")
+        st.markdown(f"### [🛒 Click here to complete your subscription]({checkout_url})")
+        st.info("You'll be taken to Stripe's secure payment page")
+        
+        # Also provide a styled button
+        st.markdown(f"""
+        <div style="text-align: center; margin: 20px;">
+            <a href="{checkout_url}" target="_blank" style="
+                background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
+                color: #0D1117;
+                padding: 15px 40px;
+                text-decoration: none;
+                border-radius: 5px;
+                font-weight: bold;
+                font-size: 18px;
+                display: inline-block;
+                box-shadow: 0 5px 15px rgba(184, 134, 11, 0.3);
+            ">Go to Secure Checkout</a>
+        </div>
+        """, unsafe_allow_html=True)
+        
         st.stop()  # Stop execution to prevent the rest of the app from running
 
 def show_login_page(db_manager, auth_manager, error_tracker):
@@ -383,10 +398,24 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
                         )
                         
                         if checkout_session and checkout_session.url:
-                            # Store the URL in session state
-                            st.session_state['checkout_url'] = checkout_session.url
-                            # Force a rerun which will trigger the redirect
-                            st.rerun()
+                            # Show the checkout link directly
+                            st.success("✅ Checkout session created!")
+                            st.markdown(f"### [🛒 Click here to subscribe]({checkout_session.url})")
+                            
+                            # Styled button alternative
+                            st.markdown(f"""
+                            <div style="margin: 10px 0;">
+                                <a href="{checkout_session.url}" target="_blank" style="
+                                    background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
+                                    color: #0D1117;
+                                    padding: 10px 20px;
+                                    text-decoration: none;
+                                    border-radius: 5px;
+                                    font-weight: 600;
+                                    display: inline-block;
+                                ">Open Stripe Checkout</a>
+                            </div>
+                            """, unsafe_allow_html=True)
                         else:
                             st.error("Failed to create checkout session. Please try again.")
                             st.info("If this problem persists, please contact support.")
