@@ -18,10 +18,17 @@ def create_skills_chart(skills_assessment):
         
     skill_df = pd.DataFrame(skill_data)
     
+    # Create a color scale that uses the brand colors
     chart = alt.Chart(skill_df).mark_bar().encode(
         x=alt.X('Rating:Q', scale=alt.Scale(domain=[0, 100]), title='Rating (0-100)'),
         y=alt.Y('Category:N', sort='-x', title=None),
-        color=alt.Color('Rating:Q', scale=alt.Scale(scheme='viridis')),
+        color=alt.Color('Rating:Q', 
+            scale=alt.Scale(
+                domain=[0, 50, 75, 100],
+                range=['#EF4444', '#B8860B', '#D4AF37', '#10B981']
+            ),
+            legend=None
+        ),
         tooltip=['Category', 'Rating']
     ).properties(height=200)
     
@@ -266,7 +273,7 @@ def display_pricing():
     
     # Subscribe button
     if 'user_id' in st.session_state and 'user_email' in st.session_state:
-        if st.button("Subscribe Now", use_container_width=True):
+        if st.button("Subscribe Now", use_container_width=True, type="primary"):
             try:
                 checkout_session = create_stripe_checkout_session(
                     st.session_state['user_id'],
