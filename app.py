@@ -429,42 +429,57 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # === INITIALIZATION ===
+@st.cache_resource
+def init_database_manager():
+    """Initialize and cache the database manager."""
+    return DatabaseManager()
+
+@st.cache_resource
+def init_auth_manager(_db_manager):
+    """Initialize and cache the auth manager."""
+    return AuthManager(_db_manager)
+
 def init_resources():
-    """Initialize and cache resources."""
-    # Only print if not already initialized
-    if 'db_manager' not in st.session_state:
-        print("Initializing resources...")
+    """Initialize resources for the current session."""
+    # Get cached managers
+    db_manager = init_database_manager()
+    auth_manager = init_auth_manager(db_manager)
     
-    # Initialize database manager
-    db_manager = DatabaseManager()
-    
-    # Initialize schema - only if not already done
-    if 'schema_initialized' not in st.session_state:
-        try:
-            db_manager.initialize_schema()
-            st.session_state['schema_initialized'] = True
-        except Exception as e:
-            print(f"Schema initialization failed: {str(e)}")
-    
-    # Initialize auth manager
-    auth_manager = AuthManager(db_manager)
-    
-    # Initialize error tracker
+    # Create new error tracker for this session
     error_tracker = ErrorTracker()
     
+    # Initialize schema only once per app instance
+    if 'schema_initialized' not in st.session_state:
+        if db_manager and db_manager.connection_params:
+            try:
+                # Test connection first
+                if db_manager.test_connection():
+                    db_manager.initialize_schema()
+                    st.session_state['schema_initialized'] = True
+                else:
+                    st.error("Failed to connect to database. Please check your configuration.")
+            except Exception as e:
+                st.error(f"Failed to initialize database: {str(e)}")
+                print(f"Schema initialization error: {str(e)}")
+    
     return db_manager, auth_manager, error_tracker
-
-# Initialize resources
-db_manager, auth_manager, error_tracker = init_resources()
-
-# Store in session state for access in other modules
-st.session_state['db_manager'] = db_manager
-st.session_state['auth_manager'] = auth_manager
-st.session_state['error_tracker'] = error_tracker
 
 # === MAIN APPLICATION ===
 def main():
     """Main application entry point."""
+    
+    # Initialize resources
+    db_manager, auth_manager, error_tracker = init_resources()
+    
+    # Store in session state for access in other modules
+    st.session_state['db_manager'] = db_manager
+    st.session_state['auth_manager'] = auth_manager
+    st.session_state['error_tracker'] = error_tracker
+    
+    # Check if database is properly configured
+    if not db_manager or not db_manager.connection_params:
+        st.error("Database configuration missing. Please check your Streamlit secrets.")
+        st.stop()
     
     # Check URL parameters
     query_params = st.query_params
