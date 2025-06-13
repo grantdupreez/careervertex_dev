@@ -1,60 +1,106 @@
 import streamlit as st
-from db_manager import DatabaseManager
-from auth_manager import AuthManager
+import psycopg2
+from psycopg2.extras import DictCursor
 import uuid
 import bcrypt
 from datetime import datetime
+import traceback
 
-st.title("Authentication Debug Test")
+st.title("Fixed Authentication Debug Test")
 
-# Initialize database manager
-db_manager = DatabaseManager()
-auth_manager = AuthManager(db_manager)
+# Direct database connection function
+def get_db_connection():
+    """Get a direct database connection"""
+    try:
+        conn = psycopg2.connect(
+            dbname=st.secrets["DB_NAME"],
+            user=st.secrets["DB_USER"],
+            password=st.secrets["DB_PASSWORD"],
+            host=st.secrets["DB_HOST"],
+            port=st.secrets["DB_PORT"],
+            sslmode='require'
+        )
+        return conn
+    except Exception as e:
+        st.error(f"Connection failed: {str(e)}")
+        return None
 
 # Test database connection
 st.header("1. Database Connection Test")
-if st.button("Test Connection"):
-    try:
-        result = db_manager.execute_query("SELECT 1 as test")
-        if result:
-            st.success("✅ Database connection successful")
-        else:
-            st.error("❌ Database query returned None")
-    except Exception as e:
-        st.error(f"❌ Database connection failed: {str(e)}")
+if st.button("Test Direct Connection"):
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor(cursor_factory=DictCursor)
+            cursor.execute("SELECT 1 as test")
+            result = cursor.fetchone()
+            if result:
+                st.success("✅ Direct database connection successful")
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            st.error(f"Query failed: {str(e)}")
 
 # Check if users table exists
 st.header("2. Check Users Table")
 if st.button("Check Table"):
-    try:
-        result = db_manager.execute_query(
-            """
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_name = 'users'
-            )
-            """
-        )
-        if result and result[0]['exists']:
-            st.success("✅ Users table exists")
-            
-            # Check table structure
-            columns = db_manager.execute_query(
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor(cursor_factory=DictCursor)
+            cursor.execute(
                 """
-                SELECT column_name, data_type, is_nullable 
-                FROM information_schema.columns 
-                WHERE table_name = 'users'
-                ORDER BY ordinal_position
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'users'
+                )
                 """
             )
-            if columns:
-                st.write("Table structure:")
-                for col in columns:
-                    st.write(f"- {col['column_name']}: {col['data_type']} (nullable: {col['is_nullable']})")
-        else:
-            st.error("❌ Users table does not exist")
-    except Exception as e:
-        st.error(f"Error checking table: {str(e)}")
+            result = cursor.fetchone()
+            if result and result['exists']:
+                st.success("✅ Users table exists")
+                
+                # Check table structure
+                cursor.execute(
+                    """
+                    SELECT column_name, data_type, is_nullable 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'users'
+                    ORDER BY ordinal_position
+                    """
+                )
+                columns = cursor.fetchall()
+                if columns:
+                    st.write("Table structure:")
+                    for col in columns:
+                        st.write(f"- {col['column_name']}: {col['data_type']} (nullable: {col['is_nullable']})")
+            else:
+                st.error("❌ Users table does not exist")
+                
+                # Try to create it
+                if st.button("Create Users Table"):
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS users (
+                            user_id UUID PRIMARY KEY,
+                            email VARCHAR(255) UNIQUE NOT NULL,
+                            password_hash VARCHAR(255) NOT NULL,
+                            full_name VARCHAR(255),
+                            subscription_status VARCHAR(50) DEFAULT 'inactive',
+                            subscription_start TIMESTAMP,
+                            subscription_end TIMESTAMP,
+                            stripe_customer_id VARCHAR(255),
+                            stripe_subscription_id VARCHAR(255),
+                            created_at TIMESTAMP DEFAULT NOW(),
+                            last_login TIMESTAMP
+                        )
+                    """)
+                    conn.commit()
+                    st.success("Table created!")
+                    
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            st.error(f"Error: {str(e)}")
 
 # Test user registration
 st.header("3. Test User Registration")
@@ -63,49 +109,56 @@ with st.form("test_register"):
     test_password = st.text_input("Test Password", value="testpass123", type="password")
     test_name = st.text_input("Test Name", value="Test User")
     
-    if st.form_submit_button("Test Registration"):
+    if st.form_submit_button("Register User"):
         st.write("Testing registration...")
         
-        # Try direct database insert first
-        try:
-            # Generate test data
-            user_id = str(uuid.uuid4())
-            password_hash = bcrypt.hashpw(test_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-            
-            # Direct insert
-            result = db_manager.execute_query(
-                """
-                INSERT INTO users (user_id, email, password_hash, full_name, created_at)
-                VALUES (%s, %s, %s, %s, %s)
-                RETURNING user_id
-                """,
-                (user_id, test_email, password_hash, test_name, datetime.now()),
-                fetch=True,
-                commit=True
-            )
-            
-            if result:
-                st.success(f"✅ Direct insert successful! User ID: {result[0]['user_id']}")
-            else:
-                st.error("❌ Direct insert returned None")
+        conn = get_db_connection()
+        if conn:
+            try:
+                cursor = conn.cursor(cursor_factory=DictCursor)
                 
-        except Exception as e:
-            st.error(f"❌ Direct insert failed: {str(e)}")
-            import traceback
-            st.code(traceback.format_exc())
-        
-        # Now try through AuthManager
-        st.write("\nTesting through AuthManager...")
-        try:
-            success, result = auth_manager.register_user(test_email + "_auth", test_password, test_name)
-            if success:
-                st.success(f"✅ AuthManager registration successful! User ID: {result}")
-            else:
-                st.error(f"❌ AuthManager registration failed: {result}")
-        except Exception as e:
-            st.error(f"❌ AuthManager error: {str(e)}")
-            import traceback
-            st.code(traceback.format_exc())
+                # Check if user exists
+                cursor.execute("SELECT user_id FROM users WHERE email = %s", (test_email.lower(),))
+                existing = cursor.fetchone()
+                
+                if existing:
+                    st.error("User already exists!")
+                else:
+                    # Generate user data
+                    user_id = str(uuid.uuid4())
+                    password_hash = bcrypt.hashpw(test_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                    
+                    # Insert user
+                    cursor.execute(
+                        """
+                        INSERT INTO users (user_id, email, password_hash, full_name, created_at)
+                        VALUES (%s, %s, %s, %s, %s)
+                        RETURNING user_id
+                        """,
+                        (user_id, test_email.lower(), password_hash, test_name, datetime.now())
+                    )
+                    
+                    # Commit the transaction
+                    conn.commit()
+                    
+                    # Verify the insert
+                    cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+                    new_user = cursor.fetchone()
+                    
+                    if new_user:
+                        st.success(f"✅ User registered successfully!")
+                        st.json(dict(new_user))
+                    else:
+                        st.error("❌ User registration verification failed")
+                        
+                cursor.close()
+                conn.close()
+                
+            except Exception as e:
+                st.error(f"Registration failed: {str(e)}")
+                traceback.print_exc()
+                if conn:
+                    conn.rollback()
 
 # Test user login
 st.header("4. Test User Login")
@@ -114,146 +167,207 @@ with st.form("test_login"):
     login_password = st.text_input("Password", type="password")
     
     if st.form_submit_button("Test Login"):
-        # First check if user exists
-        try:
-            user_check = db_manager.execute_query(
-                "SELECT user_id, email, password_hash FROM users WHERE email = %s",
-                (login_email,)
-            )
-            
-            if user_check:
-                st.success(f"✅ User found: {user_check[0]['user_id']}")
-                st.write(f"Password hash starts with: {user_check[0]['password_hash'][:20]}...")
+        conn = get_db_connection()
+        if conn:
+            try:
+                cursor = conn.cursor(cursor_factory=DictCursor)
                 
-                # Test password verification
-                if bcrypt.checkpw(login_password.encode('utf-8'), user_check[0]['password_hash'].encode('utf-8')):
-                    st.success("✅ Password verification successful")
+                # Get user
+                cursor.execute(
+                    "SELECT * FROM users WHERE email = %s",
+                    (login_email.lower(),)
+                )
+                user = cursor.fetchone()
+                
+                if user:
+                    st.success(f"✅ User found: {user['user_id']}")
+                    
+                    # Test password
+                    if bcrypt.checkpw(login_password.encode('utf-8'), user['password_hash'].encode('utf-8')):
+                        st.success("✅ Password correct! Login successful!")
+                        
+                        # Update last login
+                        cursor.execute(
+                            "UPDATE users SET last_login = %s WHERE user_id = %s",
+                            (datetime.now(), user['user_id'])
+                        )
+                        conn.commit()
+                        
+                        st.json(dict(user))
+                    else:
+                        st.error("❌ Invalid password")
                 else:
-                    st.error("❌ Password verification failed")
-            else:
-                st.error("❌ User not found")
+                    st.error("❌ User not found")
+                    
+                cursor.close()
+                conn.close()
                 
-        except Exception as e:
-            st.error(f"Error checking user: {str(e)}")
-        
-        # Test through AuthManager
-        st.write("\nTesting through AuthManager...")
-        try:
-            success, result = auth_manager.login_user(login_email, login_password)
-            if success:
-                st.success("✅ AuthManager login successful!")
-                st.json(result)
-            else:
-                st.error(f"❌ AuthManager login failed: {result}")
-        except Exception as e:
-            st.error(f"❌ AuthManager error: {str(e)}")
-            import traceback
-            st.code(traceback.format_exc())
+            except Exception as e:
+                st.error(f"Login error: {str(e)}")
+                traceback.print_exc()
 
 # List existing users
 st.header("5. List Existing Users")
 if st.button("List Users"):
-    try:
-        users = db_manager.execute_query(
-            "SELECT user_id, email, full_name, created_at FROM users ORDER BY created_at DESC LIMIT 10"
-        )
-        
-        if users:
-            st.write(f"Found {len(users)} users:")
-            for user in users:
-                st.write(f"- {user['email']} ({user['full_name']}) - Created: {user['created_at']}")
-        else:
-            st.info("No users found")
-    except Exception as e:
-        st.error(f"Error listing users: {str(e)}")
-
-# Test execute_query with different parameters
-st.header("6. Test Query Execution")
-if st.button("Test Various Queries"):
-    st.subheader("Test 1: Simple SELECT")
-    try:
-        result = db_manager.execute_query("SELECT NOW() as current_time")
-        st.success(f"Current time: {result[0]['current_time']}")
-    except Exception as e:
-        st.error(f"Failed: {str(e)}")
-    
-    st.subheader("Test 2: INSERT with RETURNING")
-    try:
-        test_id = str(uuid.uuid4())
-        result = db_manager.execute_query(
-            """
-            INSERT INTO users (user_id, email, password_hash, full_name, created_at)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING user_id
-            """,
-            (test_id, f"query_test_{test_id[:8]}@example.com", "dummy_hash", "Query Test", datetime.now()),
-            fetch=True,
-            commit=True
-        )
-        if result:
-            st.success(f"Insert successful: {result[0]['user_id']}")
-        else:
-            st.error("Insert returned None")
-    except Exception as e:
-        st.error(f"Failed: {str(e)}")
-    
-    st.subheader("Test 3: UPDATE")
-    if result:
+    conn = get_db_connection()
+    if conn:
         try:
-            update_result = db_manager.execute_query(
-                "UPDATE users SET full_name = %s WHERE user_id = %s",
-                ("Updated Name", test_id),
-                fetch=False,
-                commit=True
+            cursor = conn.cursor(cursor_factory=DictCursor)
+            cursor.execute(
+                "SELECT user_id, email, full_name, created_at, last_login FROM users ORDER BY created_at DESC LIMIT 10"
             )
-            st.success(f"Update result: {update_result}")
-        except Exception as e:
-            st.error(f"Failed: {str(e)}")
-
-# Check for common issues
-st.header("7. Common Issues Check")
-if st.button("Run Diagnostics"):
-    issues = []
-    
-    # Check connection
-    try:
-        conn = db_manager.get_connection()
-        if conn:
-            conn.close()
-            st.success("✅ Can create connections")
-        else:
-            issues.append("Cannot create database connections")
-    except Exception as e:
-        issues.append(f"Connection error: {str(e)}")
-    
-    # Check commit mode
-    try:
-        # Test with explicit commit
-        test_id = str(uuid.uuid4())
-        result = db_manager.execute_query(
-            "INSERT INTO users (user_id, email, password_hash, full_name) VALUES (%s, %s, %s, %s)",
-            (test_id, f"commit_test_{test_id[:8]}@example.com", "test", "Commit Test"),
-            fetch=False,
-            commit=True
-        )
-        
-        # Verify insert
-        check = db_manager.execute_query(
-            "SELECT user_id FROM users WHERE user_id = %s",
-            (test_id,)
-        )
-        
-        if check:
-            st.success("✅ Commits are working")
-        else:
-            issues.append("Commits may not be working properly")
+            users = cursor.fetchall()
             
-    except Exception as e:
-        issues.append(f"Commit test failed: {str(e)}")
+            if users:
+                st.write(f"Found {len(users)} users:")
+                for user in users:
+                    st.write(f"- **{user['email']}** ({user['full_name']}) - Created: {user['created_at']}")
+            else:
+                st.info("No users found")
+                
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            st.error(f"Error listing users: {str(e)}")
+
+# Quick user management
+st.header("6. Quick User Management")
+user_email_to_manage = st.text_input("Enter user email to manage")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    if st.button("View User"):
+        if user_email_to_manage:
+            conn = get_db_connection()
+            if conn:
+                try:
+                    cursor = conn.cursor(cursor_factory=DictCursor)
+                    cursor.execute("SELECT * FROM users WHERE email = %s", (user_email_to_manage.lower(),))
+                    user = cursor.fetchone()
+                    
+                    if user:
+                        st.json(dict(user))
+                    else:
+                        st.error("User not found")
+                        
+                    cursor.close()
+                    conn.close()
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+
+with col2:
+    if st.button("Reset Password"):
+        if user_email_to_manage:
+            conn = get_db_connection()
+            if conn:
+                try:
+                    cursor = conn.cursor(cursor_factory=DictCursor)
+                    
+                    # Generate new password
+                    new_password = f"reset_{uuid.uuid4().hex[:8]}"
+                    password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                    
+                    # Update password
+                    cursor.execute(
+                        "UPDATE users SET password_hash = %s WHERE email = %s",
+                        (password_hash, user_email_to_manage.lower())
+                    )
+                    
+                    if cursor.rowcount > 0:
+                        conn.commit()
+                        st.success(f"Password reset to: **{new_password}**")
+                    else:
+                        st.error("User not found")
+                        
+                    cursor.close()
+                    conn.close()
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+
+with col3:
+    if st.button("Delete User"):
+        if user_email_to_manage:
+            if st.checkbox("Confirm deletion"):
+                conn = get_db_connection()
+                if conn:
+                    try:
+                        cursor = conn.cursor(cursor_factory=DictCursor)
+                        
+                        # Get user ID first
+                        cursor.execute("SELECT user_id FROM users WHERE email = %s", (user_email_to_manage.lower(),))
+                        user = cursor.fetchone()
+                        
+                        if user:
+                            user_id = user['user_id']
+                            
+                            # Delete related records
+                            cursor.execute("DELETE FROM token_usage WHERE user_id = %s", (user_id,))
+                            cursor.execute("DELETE FROM analyses WHERE user_id = %s", (user_id,))
+                            cursor.execute("DELETE FROM job_descriptions WHERE user_id = %s", (user_id,))
+                            cursor.execute("DELETE FROM cvs WHERE user_id = %s", (user_id,))
+                            cursor.execute("DELETE FROM payments WHERE user_id = %s", (user_id,))
+                            cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+                            
+                            conn.commit()
+                            st.success("User deleted successfully")
+                        else:
+                            st.error("User not found")
+                            
+                        cursor.close()
+                        conn.close()
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
+
+# Connection pool info
+st.header("7. Connection Info")
+if st.button("Show Connection Details"):
+    st.code(f"""
+    Database: {st.secrets.get('DB_NAME', 'Not set')}
+    Host: {st.secrets.get('DB_HOST', 'Not set')}
+    Port: {st.secrets.get('DB_PORT', 'Not set')}
+    User: {st.secrets.get('DB_USER', 'Not set')}
+    SSL Mode: require
+    """)
+
+# Create test user for main app
+st.header("8. Create Test User for Main App")
+with st.form("create_app_user"):
+    app_email = st.text_input("Email", value="demo@example.com")
+    app_password = st.text_input("Password", value="demo123", type="password")
+    app_name = st.text_input("Full Name", value="Demo User")
     
-    if issues:
-        st.error("Issues found:")
-        for issue in issues:
-            st.write(f"- {issue}")
-    else:
-        st.success("✅ No issues detected")
+    if st.form_submit_button("Create User for App", type="primary"):
+        conn = get_db_connection()
+        if conn:
+            try:
+                cursor = conn.cursor(cursor_factory=DictCursor)
+                
+                # Check if exists
+                cursor.execute("SELECT user_id FROM users WHERE email = %s", (app_email.lower(),))
+                if cursor.fetchone():
+                    st.warning("User already exists!")
+                else:
+                    # Create user
+                    user_id = str(uuid.uuid4())
+                    password_hash = bcrypt.hashpw(app_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                    
+                    cursor.execute(
+                        """
+                        INSERT INTO users (user_id, email, password_hash, full_name, created_at)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (user_id, app_email.lower(), password_hash, app_name, datetime.now())
+                    )
+                    conn.commit()
+                    
+                    st.success(f"✅ User created successfully!")
+                    st.info(f"You can now login to the main app with:")
+                    st.code(f"Email: {app_email}\nPassword: {app_password}")
+                    
+                cursor.close()
+                conn.close()
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+                if conn:
+                    conn.rollback()
