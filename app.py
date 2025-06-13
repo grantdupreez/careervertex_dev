@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import altair as alt
 import numpy as np
@@ -465,7 +466,20 @@ st.session_state['error_tracker'] = error_tracker
 # === MAIN APPLICATION ===
 def main():
     """Main application entry point."""
-    # Remove debug line that's slowing startup
+    
+    # Handle any pending Stripe checkout redirects FIRST
+    if 'checkout_url' in st.session_state and st.session_state['checkout_url']:
+        checkout_url = st.session_state['checkout_url']
+        del st.session_state['checkout_url']
+        
+        # JavaScript redirect
+        redirect_script = f"""
+        <script>
+        window.location.href = "{checkout_url}";
+        </script>
+        """
+        components.html(redirect_script, height=0)
+        st.stop()
     
     # Check for Stripe session_id in URL params for payment completion
     query_params = st.query_params
@@ -473,11 +487,24 @@ def main():
         session_id = query_params["session_id"]
         
         # Process the successful payment
-        if handle_successful_payment(session_id, db_manager):
-            st.success("Subscription activated successfully!")
+        with st.spinner("Processing your payment..."):
+            success = handle_successful_payment(session_id, db_manager)
             
-            # Clear URL parameters
-            st.query_params.clear()
+            if success:
+                st.success("✅ Subscription activated successfully! Welcome to CareerVertex Pro!")
+                # Clear URL parameters
+                st.query_params.clear()
+                # Force refresh to update subscription status
+                st.rerun()
+            else:
+                st.error("❌ There was an issue processing your payment. Please contact support.")
+                # Clear URL parameters
+                st.query_params.clear()
+    
+    # Check for cancelled payment
+    if "canceled" in query_params:
+        st.warning("Payment was cancelled. You can try again when you're ready.")
+        st.query_params.clear()
     
     # Check if we're in admin mode
     admin_mode = False
