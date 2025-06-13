@@ -416,7 +416,25 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
     # Check if user has subscription - if not, show pricing and subscription page
     if not has_subscription:
         st.warning("You need an active subscription to use CareerVertex features.")
-        display_pricing(button_key_suffix="_dashboard_main")
+        
+        # Show pricing without the subscribe button (since we'll have a separate one below)
+        st.markdown("## Subscription")
+        
+        # Pricing card
+        st.markdown('<div class="pricing-card">', unsafe_allow_html=True)
+        st.markdown("### CareerVertex Pro")
+        st.markdown('<p class="pricing-price">£25<span class="pricing-period">/month</span></p>', unsafe_allow_html=True)
+        
+        # Features
+        st.markdown("#### Features:")
+        st.markdown('<div class="feature-item"><i>✓</i> Unlimited CV analyses</div>', unsafe_allow_html=True)
+        st.markdown('<div class="feature-item"><i>✓</i> Store multiple CVs and job descriptions</div>', unsafe_allow_html=True)
+        st.markdown('<div class="feature-item"><i>✓</i> Compare one CV to multiple job ads</div>', unsafe_allow_html=True)
+        st.markdown('<div class="feature-item"><i>✓</i> Industry-specific insights</div>', unsafe_allow_html=True)
+        st.markdown('<div class="feature-item"><i>✓</i> Custom cover letter generation</div>', unsafe_allow_html=True)
+        st.markdown('<div class="feature-item"><i>✓</i> Interview preparation tips</div>', unsafe_allow_html=True)
+        st.markdown('<div class="feature-item"><i>✓</i> Comprehensive reports</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
         
         # Add a subscribe button in the main area too
         col1, col2, col3 = st.columns([1, 2, 1])
