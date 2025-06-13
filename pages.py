@@ -12,7 +12,7 @@ from db_manager import save_analysis_result, get_user_analyses, get_analysis_by_
 from utils import extract_text_from_file
 from ai_analysis import initialize_anthropic_client, parse_cv, analyze_cv_match
 from ai_analysis import generate_interview_tips, generate_cover_letter
-from payment_manager import create_checkout_session_with_metadata, show_checkout_ui
+from payment_manager import show_subscription_ui, verify_and_process_payment
 from ui_components import display_match_score, display_strengths_and_improvements
 from ui_components import display_recommendations, display_keywords, display_cv_summary
 from ui_components import display_user_profile, display_pricing, create_skills_chart
@@ -216,24 +216,17 @@ def show_admin_page(db_manager, auth_manager, error_tracker):
                                 st.error("Failed to cancel subscription")
                 
                 with actions_col3:
-                    if st.button("Delete User", type="primary"):
-                        # Confirm deletion
-                        confirm = st.checkbox("I understand this will permanently delete the user and all their data")
-                        
-                        if confirm:
-                            # Delete related records first
-                            db_manager.execute_query("DELETE FROM token_usage WHERE user_id = %s", (user['user_id'],), fetch=False, commit=True)
-                            db_manager.execute_query("DELETE FROM analyses WHERE user_id = %s", (user['user_id'],), fetch=False, commit=True)
-                            db_manager.execute_query("DELETE FROM job_descriptions WHERE user_id = %s", (user['user_id'],), fetch=False, commit=True)
-                            db_manager.execute_query("DELETE FROM cvs WHERE user_id = %s", (user['user_id'],), fetch=False, commit=True)
-                            db_manager.execute_query("DELETE FROM payments WHERE user_id = %s", (user['user_id'],), fetch=False, commit=True)
-                            result = db_manager.execute_query("DELETE FROM users WHERE user_id = %s", (user['user_id'],), fetch=False, commit=True)
-                            
-                            if result is not None and result > 0:
-                                st.success(f"User deleted successfully.")
+                    if st.button("Verify Payment"):
+                        with st.spinner("Checking for payments..."):
+                            success, message = verify_and_process_payment(
+                                db_manager,
+                                user['user_id']
+                            )
+                            if success:
+                                st.success(message)
                                 st.rerun()
                             else:
-                                st.error("Failed to delete user")
+                                st.info(message)
         else:
             st.info("No users found in the database.")
     
@@ -335,11 +328,15 @@ def show_admin_page(db_manager, auth_manager, error_tracker):
             """)
 
 def show_dashboard(db_manager, auth_manager, error_tracker):
-    """Display user dashboard."""
+    """Display user dashboard with simplified payment flow."""
     
     # Get updated user data
     user_data = None
     if 'user_id' in st.session_state:
+        # Always check for payment status on dashboard load
+        verify_and_process_payment(db_manager, st.session_state['user_id'])
+        
+        # Get fresh user data
         user_data = auth_manager.get_user_data(st.session_state['user_id'])
         if user_data:
             st.session_state['user_data'] = user_data
@@ -362,14 +359,18 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
                 auth_manager.logout_user()
                 st.rerun()
         
-        # Manage subscription
+        # Subscription status
         st.markdown("---")
-        if user_data and not has_subscription:
-            st.warning("Your subscription is not active.")
-            if st.button("Subscribe Now", type="primary", use_container_width=True):
-                # Set flag to show checkout in main area
-                st.session_state['show_checkout'] = True
-                st.rerun()
+        if user_data:
+            if has_subscription:
+                days_left = (user_data['subscription_end'] - datetime.now()).days
+                st.success(f"✅ Pro Subscription Active")
+                st.info(f"{days_left} days remaining")
+            else:
+                st.warning("⚠️ No active subscription")
+                if st.button("Subscribe Now", type="primary", use_container_width=True):
+                    st.session_state['show_subscription'] = True
+                    st.rerun()
         
         # Information about the app
         st.markdown("---")
@@ -390,63 +391,23 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
     st.title("CareerVertex - CV Job Match Analyser")
     st.markdown("*Analyse how well your CV matches specific job descriptions*")
     
-    # Check if we need to show checkout UI
-    if st.session_state.get('show_checkout', False):
-        with st.spinner("Creating checkout session..."):
-            checkout_session, error = create_checkout_session_with_metadata(
-                db_manager,
-                user_data['user_id'],
-                user_data['email']
-            )
-        
-        if checkout_session:
-            show_checkout_ui(checkout_session)
-            del st.session_state['show_checkout']
-            st.stop()
+    # Check if we need to show subscription UI
+    if st.session_state.get('show_subscription', False):
+        del st.session_state['show_subscription']
+        subscribed = show_subscription_ui(db_manager, user_data)
+        if subscribed:
+            st.rerun()
         else:
-            st.error(f"Failed to create checkout session: {error}")
-            del st.session_state['show_checkout']
+            return  # Don't show the rest of the dashboard
     
-    # Check if user has subscription - if not, show pricing and subscription page
+    # Check subscription before showing main features
     if not has_subscription:
         st.warning("You need an active subscription to use CareerVertex features.")
         
-        # Show pricing
-        st.markdown("## Subscription")
-        
-        # Pricing card
-        st.markdown('<div class="pricing-card">', unsafe_allow_html=True)
-        st.markdown("### CareerVertex Pro")
-        st.markdown('<p class="pricing-price">£25<span class="pricing-period">/month</span></p>', unsafe_allow_html=True)
-        
-        # Features
-        st.markdown("#### Features:")
-        st.markdown('<div class="feature-item"><i>✓</i> Unlimited CV analyses</div>', unsafe_allow_html=True)
-        st.markdown('<div class="feature-item"><i>✓</i> Store multiple CVs and job descriptions</div>', unsafe_allow_html=True)
-        st.markdown('<div class="feature-item"><i>✓</i> Compare one CV to multiple job ads</div>', unsafe_allow_html=True)
-        st.markdown('<div class="feature-item"><i>✓</i> Industry-specific insights</div>', unsafe_allow_html=True)
-        st.markdown('<div class="feature-item"><i>✓</i> Custom cover letter generation</div>', unsafe_allow_html=True)
-        st.markdown('<div class="feature-item"><i>✓</i> Interview preparation tips</div>', unsafe_allow_html=True)
-        st.markdown('<div class="feature-item"><i>✓</i> Comprehensive reports</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Add a subscribe button in the main area too
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            if st.button("Subscribe Now - £25/month", type="primary", use_container_width=True, key="main_subscribe"):
-                with st.spinner("Creating checkout session..."):
-                    checkout_session, error = create_checkout_session_with_metadata(
-                        db_manager,
-                        user_data['user_id'],
-                        user_data['email']
-                    )
-                    
-                    if checkout_session:
-                        show_checkout_ui(checkout_session)
-                        st.stop()
-                    else:
-                        st.error(f"Failed to create checkout session: {error}")
-        return
+        # Show subscription UI
+        subscribed = show_subscription_ui(db_manager, user_data)
+        if not subscribed:
+            return  # Don't show the rest of the dashboard
     
     # Initialize Anthropic client
     client = initialize_anthropic_client()
@@ -989,7 +950,7 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
             
             with col2:
                 # Subscription info
-                if user_data.get('subscription_status') == 'active' and user_data.get('subscription_end') and user_data.get('subscription_end') > datetime.now():
+                if has_subscription:
                     days_left = (user_data['subscription_end'] - datetime.now()).days
                     st.success(f"✅ Active Subscription ({days_left} days remaining)")
                     st.markdown(f"**Subscription End:** {user_data['subscription_end'].strftime('%d %B %Y')}")
@@ -997,18 +958,9 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
                     st.error("❌ No Active Subscription")
                     
                     if st.button("Subscribe Now", key="account_subscribe"):
-                        with st.spinner("Creating checkout session..."):
-                            checkout_session, error = create_checkout_session_with_metadata(
-                                db_manager,
-                                user_data['user_id'],
-                                user_data['email']
-                            )
-                            
-                            if checkout_session:
-                                show_checkout_ui(checkout_session)
-                                st.stop()
-                            else:
-                                st.error(f"Failed to create checkout session: {error}")
+                        subscribed = show_subscription_ui(db_manager, user_data)
+                        if subscribed:
+                            st.rerun()
             
             st.markdown('</div>', unsafe_allow_html=True)
             
@@ -1049,7 +1001,7 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
             st.markdown('<div class="card">', unsafe_allow_html=True)
             st.subheader("Account Actions")
             
-            # Change password (simplified - in production you'd want email verification)
+            # Change password
             with st.expander("Change Password"):
                 with st.form("change_password_form"):
                     current_password = st.text_input("Current Password", type="password")
@@ -1119,6 +1071,7 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
                     db_manager.execute_query("DELETE FROM job_descriptions WHERE user_id = %s", (user_id,), fetch=False, commit=True)
                     db_manager.execute_query("DELETE FROM cvs WHERE user_id = %s", (user_id,), fetch=False, commit=True)
                     db_manager.execute_query("DELETE FROM payments WHERE user_id = %s", (user_id,), fetch=False, commit=True)
+                    db_manager.execute_query("DELETE FROM payment_sessions WHERE user_id = %s", (user_id,), fetch=False, commit=True)
                     result = db_manager.execute_query("DELETE FROM users WHERE user_id = %s", (user_id,), fetch=False, commit=True)
                     
                     if result is not None and result > 0:
@@ -1128,5 +1081,20 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
                         st.rerun()
                     else:
                         st.error("Failed to delete account. Please contact support.")
+            
+            # Cancel subscription
+            if has_subscription:
+                with st.expander("Cancel Subscription"):
+                    st.warning("Your subscription will remain active until the end of the current billing period.")
+                    
+                    if st.button("Cancel Subscription"):
+                        from payment_manager import cancel_subscription
+                        success, message = cancel_subscription(user_data['user_id'], db_manager)
+                        
+                        if success:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.error(message)
             
             st.markdown('</div>', unsafe_allow_html=True)
