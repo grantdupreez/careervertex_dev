@@ -30,23 +30,24 @@ def show_login_page(db_manager, auth_manager, error_tracker):
         with st.form("login_form"):
             email = st.text_input("Email")
             password = st.text_input("Password", type="password")
-            submit_login = st.form_submit_button("Login")
+            submit_login = st.form_submit_button("Login", type="primary")
             
             if submit_login:
                 if not email or not password:
                     st.error("Please enter both email and password.")
                 else:
-                    success, result = auth_manager.login_user(email, password)
-                    if success:
-                        # Store user data in session state
-                        st.session_state['user_id'] = result['user_id']
-                        st.session_state['user_email'] = result['email']
-                        st.session_state['user_name'] = result['full_name'] if result['full_name'] else email
-                        st.session_state['user_data'] = result
-                        st.success("Login successful!")
-                        st.rerun()
-                    else:
-                        st.error(result)
+                    with st.spinner("Logging in..."):
+                        success, result = auth_manager.login_user(email, password)
+                        if success:
+                            # Store user data in session state
+                            st.session_state['user_id'] = result['user_id']
+                            st.session_state['user_email'] = result['email']
+                            st.session_state['user_name'] = result['full_name'] if result['full_name'] else email
+                            st.session_state['user_data'] = result
+                            st.success("Login successful!")
+                            st.rerun()
+                        else:
+                            st.error(result)
         st.markdown('</div>', unsafe_allow_html=True)
     
     with register_col:
@@ -57,19 +58,22 @@ def show_login_page(db_manager, auth_manager, error_tracker):
             new_password = st.text_input("Create Password", type="password")
             confirm_password = st.text_input("Confirm Password", type="password")
             full_name = st.text_input("Full Name")
-            submit_register = st.form_submit_button("Create Account")
+            submit_register = st.form_submit_button("Create Account", type="primary")
             
             if submit_register:
                 if not new_email or not new_password or not confirm_password:
                     st.error("Please fill out all required fields.")
                 elif new_password != confirm_password:
                     st.error("Passwords do not match.")
+                elif len(new_password) < 6:
+                    st.error("Password must be at least 6 characters long.")
                 else:
-                    success, result = auth_manager.register_user(new_email, new_password, full_name)
-                    if success:
-                        st.success("Registration successful! Please log in.")
-                    else:
-                        st.error(result)
+                    with st.spinner("Creating your account..."):
+                        success, result = auth_manager.register_user(new_email, new_password, full_name)
+                        if success:
+                            st.success("Registration successful! Please log in.")
+                        else:
+                            st.error(result)
         st.markdown('</div>', unsafe_allow_html=True)
     
     # App description
@@ -1025,42 +1029,4 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
                             "full_name": user_data.get('full_name'),
                             "member_since": user_data.get('created_at').isoformat() if user_data.get('created_at') else None
                         },
-                        "cvs": get_user_cvs(db_manager, user_data['user_id']),
-                        "analyses": get_user_analyses(db_manager, user_data['user_id'])
-                    }
-                    
-                    # Convert to JSON
-                    export_json = json.dumps(export_data, indent=2, default=str)
-                    
-                    # Provide download
-                    st.download_button(
-                        label="Download Data (JSON)",
-                        data=export_json,
-                        file_name=f"careervertex_data_{user_data['email']}.json",
-                        mime="application/json"
-                    )
-            
-            # Delete account
-            with st.expander("⚠️ Delete Account"):
-                st.warning("This action cannot be undone. All your data will be permanently deleted.")
-                
-                delete_confirmation = st.text_input("Type 'DELETE' to confirm account deletion")
-                
-                if st.button("Delete My Account", type="primary") and delete_confirmation == "DELETE":
-                    # Delete all user data
-                    user_id = user_data['user_id']
-                    
-                    # Delete in reverse order of foreign key dependencies
-                    db_manager.execute_query("DELETE FROM token_usage WHERE user_id = %s", (user_id,), fetch=False)
-                    db_manager.execute_query("DELETE FROM analyses WHERE user_id = %s", (user_id,), fetch=False)
-                    db_manager.execute_query("DELETE FROM job_descriptions WHERE user_id = %s", (user_id,), fetch=False)
-                    db_manager.execute_query("DELETE FROM cvs WHERE user_id = %s", (user_id,), fetch=False)
-                    db_manager.execute_query("DELETE FROM payments WHERE user_id = %s", (user_id,), fetch=False)
-                    db_manager.execute_query("DELETE FROM users WHERE user_id = %s", (user_id,), fetch=False)
-                    
-                    # Logout user
-                    auth_manager.logout_user()
-                    st.success("Account deleted successfully. You have been logged out.")
-                    st.rerun()
-            
-            st.markdown('</div>', unsafe_allow_html=True)
+                        "cvs":
