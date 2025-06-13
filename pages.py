@@ -12,44 +12,10 @@ from db_manager import save_analysis_result, get_user_analyses, get_analysis_by_
 from utils import extract_text_from_file
 from ai_analysis import initialize_anthropic_client, parse_cv, analyze_cv_match
 from ai_analysis import generate_interview_tips, generate_cover_letter
-from payment_manager import create_stripe_checkout_session, create_stripe_checkout_session_secure
+from payment_manager import create_checkout_session_with_metadata, show_checkout_ui
 from ui_components import display_match_score, display_strengths_and_improvements
 from ui_components import display_recommendations, display_keywords, display_cv_summary
 from ui_components import display_user_profile, display_pricing, create_skills_chart
-
-def handle_subscription_redirect():
-    """
-    Handle Stripe checkout URL redirect properly.
-    Since automatic redirects can be problematic, we'll show a clear link instead.
-    """
-    if 'checkout_url' in st.session_state and st.session_state['checkout_url']:
-        checkout_url = st.session_state['checkout_url']
-        # Clear the checkout URL from session state
-        del st.session_state['checkout_url']
-        
-        # Display clear instructions with link
-        st.success("✅ Checkout session created successfully!")
-        st.markdown(f"### [🛒 Click here to complete your subscription]({checkout_url})")
-        st.info("You'll be taken to Stripe's secure payment page")
-        
-        # Also provide a styled button
-        st.markdown(f"""
-        <div style="text-align: center; margin: 20px;">
-            <a href="{checkout_url}" target="_blank" style="
-                background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
-                color: #0D1117;
-                padding: 15px 40px;
-                text-decoration: none;
-                border-radius: 5px;
-                font-weight: bold;
-                font-size: 18px;
-                display: inline-block;
-                box-shadow: 0 5px 15px rgba(184, 134, 11, 0.3);
-            ">Go to Secure Checkout</a>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.stop()  # Stop execution to prevent the rest of the app from running
 
 def show_login_page(db_manager, auth_manager, error_tracker):
     """Display login and registration form."""
@@ -195,13 +161,17 @@ def show_admin_page(db_manager, auth_manager, error_tracker):
                         password_hash = bcrypt.hashpw(temp_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
                         
                         # Update in database
-                        db_manager.execute_query(
+                        result = db_manager.execute_query(
                             "UPDATE users SET password_hash = %s WHERE user_id = %s",
                             (password_hash, user['user_id']),
-                            fetch=False
+                            fetch=False,
+                            commit=True
                         )
                         
-                        st.success(f"Password reset. Temporary password: {temp_password}")
+                        if result is not None and result > 0:
+                            st.success(f"Password reset. Temporary password: {temp_password}")
+                        else:
+                            st.error("Failed to reset password")
                 
                 with actions_col2:
                     if user['status'] != 'Active':
@@ -211,7 +181,7 @@ def show_admin_page(db_manager, auth_manager, error_tracker):
                             end_date = start_date + timedelta(days=30)
                             
                             # Update in database
-                            db_manager.execute_query(
+                            result = db_manager.execute_query(
                                 """
                                 UPDATE users 
                                 SET subscription_status = 'active',
@@ -220,22 +190,30 @@ def show_admin_page(db_manager, auth_manager, error_tracker):
                                 WHERE user_id = %s
                                 """,
                                 (start_date, end_date, user['user_id']),
-                                fetch=False
+                                fetch=False,
+                                commit=True
                             )
                             
-                            st.success(f"Subscription extended by 30 days.")
-                            st.rerun()
+                            if result is not None and result > 0:
+                                st.success(f"Subscription extended by 30 days.")
+                                st.rerun()
+                            else:
+                                st.error("Failed to extend subscription")
                     else:
                         if st.button("Cancel Subscription"):
                             # Update in database
-                            db_manager.execute_query(
+                            result = db_manager.execute_query(
                                 "UPDATE users SET subscription_status = 'inactive' WHERE user_id = %s",
                                 (user['user_id'],),
-                                fetch=False
+                                fetch=False,
+                                commit=True
                             )
                             
-                            st.success(f"Subscription canceled.")
-                            st.rerun()
+                            if result is not None and result > 0:
+                                st.success(f"Subscription canceled.")
+                                st.rerun()
+                            else:
+                                st.error("Failed to cancel subscription")
                 
                 with actions_col3:
                     if st.button("Delete User", type="primary"):
@@ -244,15 +222,18 @@ def show_admin_page(db_manager, auth_manager, error_tracker):
                         
                         if confirm:
                             # Delete related records first
-                            db_manager.execute_query("DELETE FROM token_usage WHERE user_id = %s", (user['user_id'],), fetch=False)
-                            db_manager.execute_query("DELETE FROM analyses WHERE user_id = %s", (user['user_id'],), fetch=False)
-                            db_manager.execute_query("DELETE FROM job_descriptions WHERE user_id = %s", (user['user_id'],), fetch=False)
-                            db_manager.execute_query("DELETE FROM cvs WHERE user_id = %s", (user['user_id'],), fetch=False)
-                            db_manager.execute_query("DELETE FROM payments WHERE user_id = %s", (user['user_id'],), fetch=False)
-                            db_manager.execute_query("DELETE FROM users WHERE user_id = %s", (user['user_id'],), fetch=False)
+                            db_manager.execute_query("DELETE FROM token_usage WHERE user_id = %s", (user['user_id'],), fetch=False, commit=True)
+                            db_manager.execute_query("DELETE FROM analyses WHERE user_id = %s", (user['user_id'],), fetch=False, commit=True)
+                            db_manager.execute_query("DELETE FROM job_descriptions WHERE user_id = %s", (user['user_id'],), fetch=False, commit=True)
+                            db_manager.execute_query("DELETE FROM cvs WHERE user_id = %s", (user['user_id'],), fetch=False, commit=True)
+                            db_manager.execute_query("DELETE FROM payments WHERE user_id = %s", (user['user_id'],), fetch=False, commit=True)
+                            result = db_manager.execute_query("DELETE FROM users WHERE user_id = %s", (user['user_id'],), fetch=False, commit=True)
                             
-                            st.success(f"User deleted successfully.")
-                            st.rerun()
+                            if result is not None and result > 0:
+                                st.success(f"User deleted successfully.")
+                                st.rerun()
+                            else:
+                                st.error("Failed to delete user")
         else:
             st.info("No users found in the database.")
     
@@ -351,14 +332,10 @@ def show_admin_page(db_manager, auth_manager, error_tracker):
             st.markdown("### Server Information")
             st.code(f"""
             Streamlit version: {st.__version__}
-            Python version: {st.__version__}
             """)
 
 def show_dashboard(db_manager, auth_manager, error_tracker):
     """Display user dashboard."""
-    
-    # Check for pending Stripe checkout redirect FIRST
-    handle_subscription_redirect()
     
     # Get updated user data
     user_data = None
@@ -390,59 +367,9 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
         if user_data and not has_subscription:
             st.warning("Your subscription is not active.")
             if st.button("Subscribe Now", type="primary", use_container_width=True):
-                try:
-                    with st.spinner("Creating checkout session..."):
-                        # Check if payment_sessions table exists
-                        table_check = db_manager.execute_query(
-                            """
-                            SELECT EXISTS (
-                                SELECT FROM information_schema.tables 
-                                WHERE table_name = 'payment_sessions'
-                            )
-                            """
-                        )
-                        
-                        if table_check and table_check[0]['exists']:
-                            # Use secure session-based checkout
-                            checkout_session = create_stripe_checkout_session_secure(
-                                db_manager,
-                                user_data['user_id'],
-                                user_data['email']
-                            )
-                        else:
-                            # Use standard checkout
-                            checkout_session = create_stripe_checkout_session(
-                                user_data['user_id'],
-                                user_data['email']
-                            )
-                        
-                        if checkout_session and checkout_session.url:
-                            # Show the checkout link directly
-                            st.success("✅ Checkout session created!")
-                            st.markdown(f"### [🛒 Click here to subscribe]({checkout_session.url})")
-                            
-                            # Styled button alternative
-                            st.markdown(f"""
-                            <div style="margin: 10px 0;">
-                                <a href="{checkout_session.url}" target="_blank" style="
-                                    background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
-                                    color: #0D1117;
-                                    padding: 10px 20px;
-                                    text-decoration: none;
-                                    border-radius: 5px;
-                                    font-weight: 600;
-                                    display: inline-block;
-                                ">Open Stripe Checkout</a>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        else:
-                            st.error("Failed to create checkout session. Please try again.")
-                            st.info("If this problem persists, please contact support.")
-                except Exception as e:
-                    st.error(f"Failed to create checkout session: {str(e)}")
-                    print(f"Stripe checkout error: {str(e)}")
-                    import traceback
-                    traceback.print_exc()
+                # Set flag to show checkout in main area
+                st.session_state['show_checkout'] = True
+                st.rerun()
         
         # Information about the app
         st.markdown("---")
@@ -463,11 +390,28 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
     st.title("CareerVertex - CV Job Match Analyser")
     st.markdown("*Analyse how well your CV matches specific job descriptions*")
     
+    # Check if we need to show checkout UI
+    if st.session_state.get('show_checkout', False):
+        with st.spinner("Creating checkout session..."):
+            checkout_session, error = create_checkout_session_with_metadata(
+                db_manager,
+                user_data['user_id'],
+                user_data['email']
+            )
+        
+        if checkout_session:
+            show_checkout_ui(checkout_session)
+            del st.session_state['show_checkout']
+            st.stop()
+        else:
+            st.error(f"Failed to create checkout session: {error}")
+            del st.session_state['show_checkout']
+    
     # Check if user has subscription - if not, show pricing and subscription page
     if not has_subscription:
         st.warning("You need an active subscription to use CareerVertex features.")
         
-        # Show pricing without the subscribe button (since we'll have a separate one below)
+        # Show pricing
         st.markdown("## Subscription")
         
         # Pricing card
@@ -490,59 +434,18 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             if st.button("Subscribe Now - £25/month", type="primary", use_container_width=True, key="main_subscribe"):
-                try:
-                    with st.spinner("Creating checkout session..."):
-                        # Check if payment_sessions table exists
-                        table_check = db_manager.execute_query(
-                            """
-                            SELECT EXISTS (
-                                SELECT FROM information_schema.tables 
-                                WHERE table_name = 'payment_sessions'
-                            )
-                            """
-                        )
-                        
-                        if table_check and table_check[0]['exists']:
-                            # Use secure session-based checkout
-                            checkout_session = create_stripe_checkout_session_secure(
-                                db_manager,
-                                user_data['user_id'],
-                                user_data['email']
-                            )
-                        else:
-                            # Use standard checkout
-                            checkout_session = create_stripe_checkout_session(
-                                user_data['user_id'],
-                                user_data['email']
-                            )
-                        
-                        if checkout_session and checkout_session.url:
-                            # Show the checkout link directly
-                            st.success("✅ Checkout session created!")
-                            st.markdown(f"### [🛒 Click here to complete payment]({checkout_session.url})")
-                            
-                            # Styled button alternative
-                            st.markdown(f"""
-                            <div style="text-align: center; margin: 20px;">
-                                <a href="{checkout_session.url}" target="_blank" style="
-                                    background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
-                                    color: #0D1117;
-                                    padding: 15px 40px;
-                                    text-decoration: none;
-                                    border-radius: 5px;
-                                    font-weight: bold;
-                                    font-size: 18px;
-                                    display: inline-block;
-                                    box-shadow: 0 5px 15px rgba(184, 134, 11, 0.3);
-                                ">Go to Secure Checkout</a>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        else:
-                            st.error("Failed to create checkout session. Please try again.")
-                except Exception as e:
-                    st.error(f"Failed to create checkout session: {str(e)}")
-                    import traceback
-                    traceback.print_exc()
+                with st.spinner("Creating checkout session..."):
+                    checkout_session, error = create_checkout_session_with_metadata(
+                        db_manager,
+                        user_data['user_id'],
+                        user_data['email']
+                    )
+                    
+                    if checkout_session:
+                        show_checkout_ui(checkout_session)
+                        st.stop()
+                    else:
+                        st.error(f"Failed to create checkout session: {error}")
         return
     
     # Initialize Anthropic client
@@ -878,18 +781,23 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
                                             db_manager.execute_query(
                                                 "DELETE FROM analyses WHERE cv_id = %s",
                                                 (cv['cv_id'],),
-                                                fetch=False
+                                                fetch=False,
+                                                commit=True
                                             )
                                         
                                         # Delete CV
-                                        db_manager.execute_query(
+                                        result = db_manager.execute_query(
                                             "DELETE FROM cvs WHERE cv_id = %s",
                                             (cv['cv_id'],),
-                                            fetch=False
+                                            fetch=False,
+                                            commit=True
                                         )
                                         
-                                        st.success(f"CV '{cv['cv_name']}' deleted successfully!")
-                                        st.rerun()
+                                        if result is not None and result > 0:
+                                            st.success(f"CV '{cv['cv_name']}' deleted successfully!")
+                                            st.rerun()
+                                        else:
+                                            st.error("Failed to delete CV")
                             st.markdown('</div>', unsafe_allow_html=True)
         else:
             st.info("You don't have any CVs uploaded yet. Please upload one using the form above.")
@@ -1089,20 +997,18 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
                     st.error("❌ No Active Subscription")
                     
                     if st.button("Subscribe Now", key="account_subscribe"):
-                        try:
-                            with st.spinner("Creating checkout session..."):
-                                checkout_session = create_stripe_checkout_session(
-                                    user_data['user_id'],
-                                    user_data['email']
-                                )
-                                
-                                if checkout_session and checkout_session.url:
-                                    st.session_state['checkout_url'] = checkout_session.url
-                                    st.rerun()
-                                else:
-                                    st.error("Failed to create checkout session. Please try again.")
-                        except Exception as e:
-                            st.error(f"Failed to create checkout session: {str(e)}")
+                        with st.spinner("Creating checkout session..."):
+                            checkout_session, error = create_checkout_session_with_metadata(
+                                db_manager,
+                                user_data['user_id'],
+                                user_data['email']
+                            )
+                            
+                            if checkout_session:
+                                show_checkout_ui(checkout_session)
+                                st.stop()
+                            else:
+                                st.error(f"Failed to create checkout session: {error}")
             
             st.markdown('</div>', unsafe_allow_html=True)
             
@@ -1158,24 +1064,17 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
                         elif len(new_password) < 6:
                             st.error("New password must be at least 6 characters long.")
                         else:
-                            # Verify current password
-                            if bcrypt.checkpw(current_password.encode('utf-8'), user_data['password_hash'].encode('utf-8')):
-                                # Hash new password
-                                new_password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                                
-                                # Update password in database
-                                success = db_manager.execute_query(
-                                    "UPDATE users SET password_hash = %s WHERE user_id = %s",
-                                    (new_password_hash, user_data['user_id']),
-                                    fetch=False
-                                )
-                                
-                                if success:
-                                    st.success("Password changed successfully!")
-                                else:
-                                    st.error("Failed to change password. Please try again.")
+                            # Use auth_manager's change_password method
+                            success, message = auth_manager.change_password(
+                                user_data['user_id'],
+                                current_password,
+                                new_password
+                            )
+                            
+                            if success:
+                                st.success(message)
                             else:
-                                st.error("Current password is incorrect.")
+                                st.error(message)
             
             # Export data
             with st.expander("Export Your Data"):
@@ -1215,16 +1114,19 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
                     user_id = user_data['user_id']
                     
                     # Delete in reverse order of foreign key dependencies
-                    db_manager.execute_query("DELETE FROM token_usage WHERE user_id = %s", (user_id,), fetch=False)
-                    db_manager.execute_query("DELETE FROM analyses WHERE user_id = %s", (user_id,), fetch=False)
-                    db_manager.execute_query("DELETE FROM job_descriptions WHERE user_id = %s", (user_id,), fetch=False)
-                    db_manager.execute_query("DELETE FROM cvs WHERE user_id = %s", (user_id,), fetch=False)
-                    db_manager.execute_query("DELETE FROM payments WHERE user_id = %s", (user_id,), fetch=False)
-                    db_manager.execute_query("DELETE FROM users WHERE user_id = %s", (user_id,), fetch=False)
+                    db_manager.execute_query("DELETE FROM token_usage WHERE user_id = %s", (user_id,), fetch=False, commit=True)
+                    db_manager.execute_query("DELETE FROM analyses WHERE user_id = %s", (user_id,), fetch=False, commit=True)
+                    db_manager.execute_query("DELETE FROM job_descriptions WHERE user_id = %s", (user_id,), fetch=False, commit=True)
+                    db_manager.execute_query("DELETE FROM cvs WHERE user_id = %s", (user_id,), fetch=False, commit=True)
+                    db_manager.execute_query("DELETE FROM payments WHERE user_id = %s", (user_id,), fetch=False, commit=True)
+                    result = db_manager.execute_query("DELETE FROM users WHERE user_id = %s", (user_id,), fetch=False, commit=True)
                     
-                    # Logout user
-                    auth_manager.logout_user()
-                    st.success("Account deleted successfully. You have been logged out.")
-                    st.rerun()
+                    if result is not None and result > 0:
+                        # Logout user
+                        auth_manager.logout_user()
+                        st.success("Account deleted successfully. You have been logged out.")
+                        st.rerun()
+                    else:
+                        st.error("Failed to delete account. Please contact support.")
             
             st.markdown('</div>', unsafe_allow_html=True)
