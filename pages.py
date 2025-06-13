@@ -116,7 +116,7 @@ def show_login_page(db_manager, auth_manager, error_tracker):
     pricing_col1, pricing_col2, pricing_col3 = st.columns([1, 2, 1])
     
     with pricing_col2:
-        display_pricing()
+        display_pricing(button_key_suffix="_login_page")
 
 def show_admin_page(db_manager, auth_manager, error_tracker):
     """Display admin dashboard."""
@@ -416,7 +416,7 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
     # Check if user has subscription - if not, show pricing and subscription page
     if not has_subscription:
         st.warning("You need an active subscription to use CareerVertex features.")
-        display_pricing()
+        display_pricing(button_key_suffix="_dashboard_main")
         
         # Add a subscribe button in the main area too
         col1, col2, col3 = st.columns([1, 2, 1])
