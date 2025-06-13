@@ -12,7 +12,7 @@ from db_manager import save_analysis_result, get_user_analyses, get_analysis_by_
 from utils import extract_text_from_file
 from ai_analysis import initialize_anthropic_client, parse_cv, analyze_cv_match
 from ai_analysis import generate_interview_tips, generate_cover_letter
-from payment_manager import create_stripe_checkout_session
+from payment_manager import create_stripe_checkout_session, create_stripe_checkout_session_secure
 from ui_components import display_match_score, display_strengths_and_improvements
 from ui_components import display_recommendations, display_keywords, display_cv_summary
 from ui_components import display_user_profile, display_pricing, create_skills_chart
@@ -392,37 +392,25 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
             if st.button("Subscribe Now", type="primary", use_container_width=True):
                 try:
                     with st.spinner("Creating checkout session..."):
-                        # Try to use secure session-based checkout
-                        try:
-                            from payment_manager import create_stripe_checkout_session_secure
-                            
-                            # Check if payment_sessions table exists
-                            table_check = db_manager.execute_query(
-                                """
-                                SELECT EXISTS (
-                                    SELECT FROM information_schema.tables 
-                                    WHERE table_name = 'payment_sessions'
-                                )
-                                """
+                        # Check if payment_sessions table exists
+                        table_check = db_manager.execute_query(
+                            """
+                            SELECT EXISTS (
+                                SELECT FROM information_schema.tables 
+                                WHERE table_name = 'payment_sessions'
                             )
-                            
-                            if table_check and table_check[0]['exists']:
-                                # Use secure session-based checkout
-                                checkout_session = create_stripe_checkout_session_secure(
-                                    db_manager,
-                                    user_data['user_id'],
-                                    user_data['email']
-                                )
-                            else:
-                                # Fall back to standard checkout
-                                from payment_manager import create_stripe_checkout_session
-                                checkout_session = create_stripe_checkout_session(
-                                    user_data['user_id'],
-                                    user_data['email']
-                                )
-                        except ImportError:
-                            # If secure function doesn't exist, use standard
-                            from payment_manager import create_stripe_checkout_session
+                            """
+                        )
+                        
+                        if table_check and table_check[0]['exists']:
+                            # Use secure session-based checkout
+                            checkout_session = create_stripe_checkout_session_secure(
+                                db_manager,
+                                user_data['user_id'],
+                                user_data['email']
+                            )
+                        else:
+                            # Use standard checkout
                             checkout_session = create_stripe_checkout_session(
                                 user_data['user_id'],
                                 user_data['email']
@@ -453,6 +441,8 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
                 except Exception as e:
                     st.error(f"Failed to create checkout session: {str(e)}")
                     print(f"Stripe checkout error: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
         
         # Information about the app
         st.markdown("---")
