@@ -39,6 +39,7 @@ class DatabaseManager:
         """Execute a database query."""
         conn = self.get_connection()
         if not conn:
+            print(f"Failed to get connection for query: {query[:50]}...")
             return None
         
         try:
@@ -55,6 +56,10 @@ class DatabaseManager:
         except Exception as e:
             conn.rollback()
             print(f"Query error: {e}")
+            print(f"Query: {query[:100]}...")
+            print(f"Params: {params}")
+            import traceback
+            traceback.print_exc()
             return None
         finally:
             conn.close()
