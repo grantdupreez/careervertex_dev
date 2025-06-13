@@ -800,3 +800,324 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
                 analysis_data = get_analysis_by_id(db_manager, st.session_state['current_analysis_id'])
                 
                 if analysis_data:
+                    # Display analysis results
+                    st.subheader(f"Analysis Results: {analysis_data['job_title']}")
+                    
+                    # Convert JSON data
+                    analysis = analysis_data['analysis_data']
+                    
+                    # Main score section
+                    st.markdown('<div class="card">', unsafe_allow_html=True)
+                    score_col1, score_col2 = st.columns([1, 3])
+                    
+                    with score_col1:
+                        match_score = analysis.get('match_score', 0)
+                        display_match_score(match_score)
+                    
+                    with score_col2:
+                        # Skill assessment visualization
+                        st.subheader("Skills Assessment")
+                        skills_assessment = analysis.get('skills_assessment', {})
+                        
+                        skills_chart = create_skills_chart(skills_assessment)
+                        if skills_chart:
+                            st.altair_chart(skills_chart, use_container_width=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    # Strengths and improvement areas
+                    display_strengths_and_improvements(
+                        strengths=analysis.get('strengths', []), 
+                        improvements=analysis.get('improvement_areas', [])
+                    )
+                    
+                    # Detailed analysis tabs
+                    analysis_detail_tabs = st.tabs([
+                        "Recommendations", "Keywords", "Cover Letter", "Interview Tips"
+                    ])
+                    
+                    with analysis_detail_tabs[0]:
+                        # Recommendations
+                        display_recommendations(analysis.get('recommendations', []))
+                        
+                        # Experience Gap Analysis
+                        st.markdown('<div class="card">', unsafe_allow_html=True)
+                        st.subheader("Experience Gap Analysis")
+                        experience_gaps = analysis.get('experience_gap_analysis', [])
+                        if experience_gaps:
+                            for gap in experience_gaps:
+                                st.markdown(f"🔸 **{gap}**")
+                        else:
+                            st.markdown("*No specific experience gaps identified.*")
+                        st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    with analysis_detail_tabs[1]:
+                        # Keyword Analysis
+                        st.markdown('<div class="card">', unsafe_allow_html=True)
+                        keywords = analysis.get('keyword_analysis', [])
+                        display_keywords(keywords, max_cols=3)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        
+                        # Potential Alternative Job Titles
+                        st.markdown('<div class="card">', unsafe_allow_html=True)
+                        st.subheader("Alternative Job Titles to Consider")
+                        alt_titles = analysis.get('potential_job_titles', [])
+                        if alt_titles:
+                            st.markdown("Based on your CV, you might also be a good fit for these roles:")
+                            for title in alt_titles:
+                                st.markdown(f"🔹 **{title}**")
+                        else:
+                            st.markdown("*No alternative job titles suggested.*")
+                        st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    with analysis_detail_tabs[2]:
+                        # Generate cover letter
+                        st.markdown('<div class="card">', unsafe_allow_html=True)
+                        st.subheader("Custom Cover Letter")
+                        
+                        if st.button("Generate Cover Letter"):
+                            with st.spinner("Generating your personalised cover letter..."):
+                                cover_letter = generate_cover_letter(
+                                    client,
+                                    {'parsed_data': analysis_data['cv_parsed_data']},
+                                    analysis_data['description_text'],
+                                    analysis
+                                )
+                                
+                                if cover_letter:
+                                    st.markdown("### Your Cover Letter")
+                                    st.markdown(cover_letter)
+                                    
+                                    # Download button
+                                    st.download_button(
+                                        label="Download Cover Letter",
+                                        data=cover_letter,
+                                        file_name=f"cover_letter_{analysis_data['job_title'].replace(' ', '_')}.txt",
+                                        mime="text/plain"
+                                    )
+                        st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    with analysis_detail_tabs[3]:
+                        # Generate interview tips
+                        st.markdown('<div class="card">', unsafe_allow_html=True)
+                        st.subheader("Interview Preparation Tips")
+                        
+                        if st.button("Generate Interview Tips"):
+                            with st.spinner("Generating personalised interview tips..."):
+                                interview_tips = generate_interview_tips(
+                                    client,
+                                    {'parsed_data': analysis_data['cv_parsed_data']},
+                                    analysis_data['description_text'],
+                                    analysis
+                                )
+                                
+                                if interview_tips:
+                                    st.markdown("### Your Interview Tips")
+                                    st.markdown(interview_tips)
+                        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Show all user analyses
+        st.subheader("All Your Analyses")
+        user_analyses = get_user_analyses(db_manager, st.session_state['user_id'])
+        
+        if user_analyses:
+            for analysis in user_analyses:
+                st.markdown('<div class="card">', unsafe_allow_html=True)
+                
+                # Analysis header
+                col1, col2, col3 = st.columns([3, 1, 1])
+                
+                with col1:
+                    st.markdown(f"### {analysis['job_title']}")
+                    if analysis.get('company'):
+                        st.markdown(f"**Company:** {analysis['company']}")
+                    st.markdown(f"**CV:** {analysis['cv_name']}")
+                    
+                with col2:
+                    match_score = analysis['match_score']
+                    if match_score >= 80:
+                        color = "green"
+                    elif match_score >= 60:
+                        color = "orange"
+                    else:
+                        color = "red"
+                    st.markdown(f"**Match Score:** <span style='color: {color}; font-weight: bold;'>{match_score}%</span>", unsafe_allow_html=True)
+                
+                with col3:
+                    if st.button("View Details", key=f"view_{analysis['analysis_id']}"):
+                        st.session_state['current_analysis_id'] = analysis['analysis_id']
+                        st.session_state['show_analysis_tab'] = True
+                        st.rerun()
+                
+                # Analysis date
+                st.markdown(f"*Analysed on {analysis['created_at'].strftime('%d %b %Y at %H:%M')}*")
+                
+                st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.info("You haven't performed any analyses yet. Use the 'Analyse New Job' tab to get started!")
+    
+    # MY ACCOUNT TAB
+    with dashboard_tabs[3]:
+        st.header("My Account")
+        
+        if user_data:
+            # Account information
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.subheader("Account Information")
+            
+            # Display user info
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown(f"**Full Name:** {user_data.get('full_name', 'Not provided')}")
+                st.markdown(f"**Email:** {user_data.get('email', 'Not provided')}")
+                st.markdown(f"**Member Since:** {user_data.get('created_at', 'Unknown').strftime('%B %Y') if user_data.get('created_at') else 'Unknown'}")
+            
+            with col2:
+                # Subscription info
+                if user_data.get('subscription_status') == 'active' and user_data.get('subscription_end') and user_data.get('subscription_end') > datetime.now():
+                    days_left = (user_data['subscription_end'] - datetime.now()).days
+                    st.success(f"✅ Active Subscription ({days_left} days remaining)")
+                    st.markdown(f"**Subscription End:** {user_data['subscription_end'].strftime('%d %B %Y')}")
+                else:
+                    st.error("❌ No Active Subscription")
+                    
+                    if st.button("Subscribe Now", key="account_subscribe"):
+                        try:
+                            with st.spinner("Creating checkout session..."):
+                                checkout_session = create_stripe_checkout_session(
+                                    user_data['user_id'],
+                                    user_data['email']
+                                )
+                                
+                                if checkout_session and checkout_session.url:
+                                    st.session_state['checkout_url'] = checkout_session.url
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to create checkout session. Please try again.")
+                        except Exception as e:
+                            st.error(f"Failed to create checkout session: {str(e)}")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Usage statistics
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.subheader("Usage Statistics")
+            
+            # Get user's usage stats
+            user_analyses_count = len(get_user_analyses(db_manager, user_data['user_id']))
+            user_cvs_count = len(get_user_cvs(db_manager, user_data['user_id']))
+            
+            # Token usage
+            token_usage = db_manager.execute_query(
+                """
+                SELECT SUM(tokens_used) as total_tokens, COUNT(*) as request_count
+                FROM token_usage
+                WHERE user_id = %s
+                """,
+                (user_data['user_id'],)
+            )
+            
+            # Display stats
+            stats_col1, stats_col2, stats_col3 = st.columns(3)
+            
+            with stats_col1:
+                st.metric("CVs Uploaded", user_cvs_count)
+            
+            with stats_col2:
+                st.metric("Analyses Performed", user_analyses_count)
+            
+            with stats_col3:
+                total_tokens = token_usage[0]['total_tokens'] if token_usage and token_usage[0]['total_tokens'] else 0
+                st.metric("AI Tokens Used", f"{total_tokens:,}")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Account actions
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.subheader("Account Actions")
+            
+            # Change password (simplified - in production you'd want email verification)
+            with st.expander("Change Password"):
+                with st.form("change_password_form"):
+                    current_password = st.text_input("Current Password", type="password")
+                    new_password = st.text_input("New Password", type="password")
+                    confirm_new_password = st.text_input("Confirm New Password", type="password")
+                    
+                    if st.form_submit_button("Change Password"):
+                        if not current_password or not new_password or not confirm_new_password:
+                            st.error("Please fill in all fields.")
+                        elif new_password != confirm_new_password:
+                            st.error("New passwords do not match.")
+                        elif len(new_password) < 6:
+                            st.error("New password must be at least 6 characters long.")
+                        else:
+                            # Verify current password
+                            if bcrypt.checkpw(current_password.encode('utf-8'), user_data['password_hash'].encode('utf-8')):
+                                # Hash new password
+                                new_password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                                
+                                # Update password in database
+                                success = db_manager.execute_query(
+                                    "UPDATE users SET password_hash = %s WHERE user_id = %s",
+                                    (new_password_hash, user_data['user_id']),
+                                    fetch=False
+                                )
+                                
+                                if success:
+                                    st.success("Password changed successfully!")
+                                else:
+                                    st.error("Failed to change password. Please try again.")
+                            else:
+                                st.error("Current password is incorrect.")
+            
+            # Export data
+            with st.expander("Export Your Data"):
+                st.markdown("Download all your CareerVertex data including CVs and analyses.")
+                
+                if st.button("Export Data"):
+                    # Collect all user data
+                    export_data = {
+                        "user_info": {
+                            "email": user_data['email'],
+                            "full_name": user_data.get('full_name'),
+                            "member_since": user_data.get('created_at').isoformat() if user_data.get('created_at') else None
+                        },
+                        "cvs": get_user_cvs(db_manager, user_data['user_id']),
+                        "analyses": get_user_analyses(db_manager, user_data['user_id'])
+                    }
+                    
+                    # Convert to JSON
+                    export_json = json.dumps(export_data, indent=2, default=str)
+                    
+                    # Provide download
+                    st.download_button(
+                        label="Download Data (JSON)",
+                        data=export_json,
+                        file_name=f"careervertex_data_{user_data['email']}.json",
+                        mime="application/json"
+                    )
+            
+            # Delete account
+            with st.expander("⚠️ Delete Account"):
+                st.warning("This action cannot be undone. All your data will be permanently deleted.")
+                
+                delete_confirmation = st.text_input("Type 'DELETE' to confirm account deletion")
+                
+                if st.button("Delete My Account", type="primary") and delete_confirmation == "DELETE":
+                    # Delete all user data
+                    user_id = user_data['user_id']
+                    
+                    # Delete in reverse order of foreign key dependencies
+                    db_manager.execute_query("DELETE FROM token_usage WHERE user_id = %s", (user_id,), fetch=False)
+                    db_manager.execute_query("DELETE FROM analyses WHERE user_id = %s", (user_id,), fetch=False)
+                    db_manager.execute_query("DELETE FROM job_descriptions WHERE user_id = %s", (user_id,), fetch=False)
+                    db_manager.execute_query("DELETE FROM cvs WHERE user_id = %s", (user_id,), fetch=False)
+                    db_manager.execute_query("DELETE FROM payments WHERE user_id = %s", (user_id,), fetch=False)
+                    db_manager.execute_query("DELETE FROM users WHERE user_id = %s", (user_id,), fetch=False)
+                    
+                    # Logout user
+                    auth_manager.logout_user()
+                    st.success("Account deleted successfully. You have been logged out.")
+                    st.rerun()
+            
+            st.markdown('</div>', unsafe_allow_html=True)
