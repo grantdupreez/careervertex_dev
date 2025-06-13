@@ -1,8 +1,10 @@
 import streamlit as st
 import stripe
 import uuid
-from datetime import datetime
 import traceback
+import secrets
+import hashlib
+from datetime import datetime, timedelta
 
 def init_stripe():
     """Initialize Stripe with API key."""
@@ -17,6 +19,279 @@ def init_stripe():
     except Exception as e:
         print(f"ERROR: Failed to initialize Stripe: {str(e)}")
         return False
+
+def create_payment_session(db_manager, user_id, user_email):
+    """Create a payment session before redirecting to Stripe"""
+    try:
+        # Create Stripe checkout session first
+        checkout_session = create_stripe_checkout_session(user_id, user_email)
+        
+        if not checkout_session:
+            return None
+            
+        # Store session in database
+        session_id = str(uuid.uuid4())
+        expires_at = datetime.now() + timedelta(hours=1)  # 1 hour expiration
+        
+        session_data = {
+            "user_email": user_email,
+            "checkout_url": checkout_session.url,
+            "stripe_checkout_id": checkout_session.id
+        }
+        
+        db_manager.execute_query(
+            """
+            INSERT INTO payment_sessions 
+            (session_id, user_id, stripe_session_id, session_data, expires_at)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (session_id, user_id, checkout_session.id, Json(session_data), expires_at),
+            fetch=False,
+            commit=True
+        )
+        
+        return checkout_session
+        
+    except Exception as e:
+        print(f"Error creating payment session: {str(e)}")
+        return None
+
+def handle_successful_payment_with_session(session_id, db_manager):
+    """Enhanced payment handler that uses stored session data"""
+    try:
+        if not init_stripe():
+            print("ERROR: Stripe initialization failed")
+            return False
+        
+        print(f"Processing payment for Stripe session: {session_id}")
+        
+        # First, check our database for session info
+        session_info = db_manager.execute_query(
+            """
+            SELECT ps.*, u.email 
+            FROM payment_sessions ps
+            JOIN users u ON ps.user_id = u.user_id
+            WHERE ps.stripe_session_id = %s 
+            AND ps.expires_at > NOW()
+            AND ps.status = 'pending'
+            """,
+            (session_id,)
+        )
+        
+        if session_info:
+            print(f"Found session info in database for user: {session_info[0]['user_id']}")
+            stored_user_id = session_info[0]['user_id']
+            stored_email = session_info[0]['email']
+        else:
+            print("No valid session found in database, trying Stripe metadata")
+            stored_user_id = None
+            stored_email = None
+        
+        # Get the checkout session from Stripe
+        checkout_session = stripe.checkout.Session.retrieve(
+            session_id,
+            expand=['customer', 'subscription', 'line_items']
+        )
+        
+        print(f"Checkout session status: {checkout_session.payment_status}")
+        
+        # Determine user_id with fallback options
+        user_id = stored_user_id  # Prefer our stored session
+        if not user_id:
+            user_id = checkout_session.metadata.get("user_id")
+        if not user_id:
+            user_id = checkout_session.client_reference_id
+            
+        if not user_id:
+            print("ERROR: No user_id found anywhere")
+            # Last resort: try email lookup
+            email = stored_email or (checkout_session.customer_details.email if checkout_session.customer_details else None)
+            if email:
+                user_lookup = db_manager.execute_query(
+                    "SELECT user_id FROM users WHERE email = %s",
+                    (email,)
+                )
+                if user_lookup:
+                    user_id = user_lookup[0]['user_id']
+                    print(f"Found user by email: {user_id}")
+        
+        if not user_id:
+            print("ERROR: Cannot determine user for this payment")
+            return False
+            
+        # Process the subscription as before
+        subscription_id = checkout_session.subscription
+        if not subscription_id:
+            print("ERROR: No subscription in checkout session")
+            return False
+            
+        # Get subscription details
+        if isinstance(subscription_id, str):
+            subscription = stripe.Subscription.retrieve(subscription_id)
+        else:
+            subscription = subscription_id
+            
+        # Update user subscription
+        subscription_start = datetime.fromtimestamp(subscription.current_period_start)
+        subscription_end = datetime.fromtimestamp(subscription.current_period_end)
+        
+        update_result = db_manager.execute_query(
+            """
+            UPDATE users 
+            SET subscription_status = %s, 
+                subscription_start = %s,
+                subscription_end = %s,
+                stripe_customer_id = %s,
+                stripe_subscription_id = %s
+            WHERE user_id = %s
+            RETURNING user_id
+            """,
+            (
+                'active',
+                subscription_start,
+                subscription_end,
+                checkout_session.customer,
+                subscription.id,
+                user_id
+            ),
+            fetch=True,
+            commit=True
+        )
+        
+        if not update_result:
+            print("ERROR: Failed to update user subscription")
+            return False
+            
+        # Mark payment session as completed
+        if session_info:
+            db_manager.execute_query(
+                """
+                UPDATE payment_sessions 
+                SET status = 'completed', completed_at = NOW()
+                WHERE stripe_session_id = %s
+                """,
+                (session_id,),
+                fetch=False,
+                commit=True
+            )
+        
+        # Record payment
+        payment_id = str(uuid.uuid4())
+        amount = float(subscription.items.data[0].price.unit_amount) / 100
+        currency = subscription.items.data[0].price.currency.upper()
+        
+        db_manager.execute_query(
+            """
+            INSERT INTO payments (
+                payment_id, user_id, amount, currency, 
+                payment_method, stripe_payment_id, status, payment_date
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                payment_id,
+                user_id,
+                amount,
+                currency,
+                "card",
+                checkout_session.payment_intent or checkout_session.id,
+                "completed",
+                datetime.now()
+            ),
+            fetch=False,
+            commit=True
+        )
+        
+        print(f"SUCCESS: Subscription activated for user {user_id}")
+        return True
+        
+    except Exception as e:
+        print(f"ERROR in payment processing: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+# Cleanup function for expired sessions
+def cleanup_expired_sessions(db_manager):
+    """Remove expired payment sessions"""
+    try:
+        db_manager.execute_query(
+            """
+            DELETE FROM payment_sessions 
+            WHERE expires_at < NOW() 
+            OR (status = 'completed' AND completed_at < NOW() - INTERVAL '7 days')
+            """,
+            fetch=False,
+            commit=True
+        )
+    except Exception as e:
+        print(f"Error cleaning up sessions: {str(e)}")
+
+# Updated create_stripe_checkout_session to work with sessions
+def create_stripe_checkout_session_secure(db_manager, user_id, email):
+    """Create a Stripe checkout session with database session tracking"""
+    try:
+        if not init_stripe():
+            print("ERROR: Stripe initialization failed")
+            return None
+        
+        # Validate inputs
+        if not user_id or not email:
+            print("ERROR: Missing user_id or email")
+            return None
+            
+        # Create Stripe checkout session
+        price_id = st.secrets["STRIPE_PRICE_ID"]
+        app_url = st.secrets["APP_URL"].rstrip('/')
+        
+        checkout_session = stripe.checkout.Session.create(
+            customer_email=email,
+            payment_method_types=["card"],
+            line_items=[{
+                "price": price_id,
+                "quantity": 1,
+            }],
+            mode="subscription",
+            success_url=f"{app_url}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{app_url}?canceled=true",
+            client_reference_id=str(user_id),
+            metadata={"user_id": str(user_id)}
+        )
+        
+        # Store session in database
+        session_id = str(uuid.uuid4())
+        expires_at = datetime.now() + timedelta(hours=1)
+        
+        session_data = {
+            "user_email": email,
+            "checkout_url": checkout_session.url,
+            "stripe_checkout_id": checkout_session.id,
+            "created_at": datetime.now().isoformat()
+        }
+        
+        result = db_manager.execute_query(
+            """
+            INSERT INTO payment_sessions 
+            (session_id, user_id, stripe_session_id, session_data, expires_at, status)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (session_id, user_id, checkout_session.id, Json(session_data), expires_at, 'pending'),
+            fetch=False,
+            commit=True
+        )
+        
+        if result is False:
+            print("WARNING: Failed to store payment session, but continuing")
+        else:
+            print(f"Payment session stored: {session_id}")
+        
+        return checkout_session
+        
+    except Exception as e:
+        print(f"Error creating secure checkout session: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 
 def create_stripe_checkout_session(user_id, email):
     """Create a Stripe checkout session for subscription."""
