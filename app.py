@@ -506,19 +506,39 @@ def main():
         session_id = query_params["session_id"]
         
         # Process the successful payment
-        with st.spinner("Processing your payment..."):
+        st.info("Processing your payment, please wait...")
+        
+        # Try to process payment without requiring user to be logged in
+        try:
             success = handle_successful_payment(session_id, db_manager)
             
             if success:
                 st.success("✅ Subscription activated successfully! Welcome to CareerVertex Pro!")
+                st.balloons()
+                
                 # Clear URL parameters
                 st.query_params.clear()
-                # Force refresh to update subscription status
-                st.rerun()
+                
+                # If user was logged out during redirect, show login prompt
+                if 'user_id' not in st.session_state:
+                    st.info("Please log in to access your subscription.")
+                    st.markdown("Your subscription has been activated. Log in with your email to start using CareerVertex Pro.")
+                else:
+                    # Force refresh to update subscription status
+                    st.rerun()
             else:
                 st.error("❌ There was an issue processing your payment. Please contact support.")
+                st.info("Your payment may have been successful but we couldn't activate your subscription. Please contact support with your session ID.")
+                st.code(f"Session ID: {session_id}")
                 # Clear URL parameters
                 st.query_params.clear()
+        except Exception as e:
+            st.error(f"❌ Error processing payment: {str(e)}")
+            st.info("Please contact support with this information:")
+            st.code(f"Session ID: {session_id}\nError: {str(e)}")
+            print(f"Payment processing error: {str(e)}")
+            import traceback
+            traceback.print_exc()
     
     # Check for cancelled payment
     if "canceled" in query_params:
