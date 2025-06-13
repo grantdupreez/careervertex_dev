@@ -513,12 +513,29 @@ def main():
         status_placeholder = st.empty()
         
         try:
-            # Import the enhanced handler
-            from payment_manager import handle_successful_payment
+            # Import the enhanced handlers
+            from payment_manager import handle_successful_payment_with_session, handle_successful_payment
             
-            # Process the payment
+            # First try the session-based handler
             with st.spinner("Verifying payment with Stripe..."):
-                success = handle_successful_payment(session_id, db_manager)
+                # Check if payment_sessions table exists
+                table_check = db_manager.execute_query(
+                    """
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = 'payment_sessions'
+                    )
+                    """
+                )
+                
+                if table_check and table_check[0]['exists']:
+                    # Use enhanced session-based handler
+                    print("Using session-based payment handler")
+                    success = handle_successful_payment_with_session(session_id, db_manager)
+                else:
+                    # Fall back to standard handler
+                    print("Using standard payment handler (payment_sessions table not found)")
+                    success = handle_successful_payment(session_id, db_manager)
             
             if success:
                 status_placeholder.success("✅ Payment successful! Your subscription is now active.")
@@ -538,8 +555,8 @@ def main():
                     
                     if st.form_submit_button("Login", type="primary"):
                         if email and password:
-                            success, result = auth_manager.login_user(email, password)
-                            if success:
+                            login_success, result = auth_manager.login_user(email, password)
+                            if login_success:
                                 st.session_state['user_id'] = result['user_id']
                                 st.session_state['user_email'] = result['email']
                                 st.session_state['user_name'] = result['full_name'] if result['full_name'] else email
@@ -568,17 +585,28 @@ def main():
                 # Try to get more info about the session
                 try:
                     import stripe
-                    stripe.api_key = st.secrets.get("STRIPE_SECRET_KEY")
-                    checkout = stripe.checkout.Session.retrieve(session_id)
-                    if checkout.customer_details and checkout.customer_details.email:
-                        st.write(f"**Email used for payment:** {checkout.customer_details.email}")
-                except:
-                    pass
+                    if "STRIPE_SECRET_KEY" in st.secrets:
+                        stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
+                        checkout = stripe.checkout.Session.retrieve(session_id)
+                        
+                        # Display helpful information
+                        if checkout.customer_details and checkout.customer_details.email:
+                            st.write(f"**Email used for payment:** {checkout.customer_details.email}")
+                        
+                        if checkout.payment_status:
+                            st.write(f"**Payment Status:** {checkout.payment_status}")
+                            
+                        # If payment was successful but activation failed, provide more context
+                        if checkout.payment_status == "paid":
+                            st.info("✅ Your payment was successful! The issue is with account activation.")
+                            st.markdown("Please contact support and they will manually activate your account.")
+                except Exception as e:
+                    print(f"Error retrieving checkout session details: {str(e)}")
                 
                 st.markdown("**What to do next:**")
                 st.markdown("1. Check your email for a receipt from Stripe")
                 st.markdown("2. Contact support with the Session ID above")
-                st.markdown("3. We'll manually activate your subscription")
+                st.markdown("3. We'll manually activate your subscription within 24 hours")
                 
                 # Clear URL parameters
                 st.query_params.clear()
