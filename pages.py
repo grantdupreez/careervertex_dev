@@ -492,18 +492,57 @@ def show_dashboard(db_manager, auth_manager, error_tracker):
             if st.button("Subscribe Now - £25/month", type="primary", use_container_width=True, key="main_subscribe"):
                 try:
                     with st.spinner("Creating checkout session..."):
-                        checkout_session = create_stripe_checkout_session(
-                            user_data['user_id'],
-                            user_data['email']
+                        # Check if payment_sessions table exists
+                        table_check = db_manager.execute_query(
+                            """
+                            SELECT EXISTS (
+                                SELECT FROM information_schema.tables 
+                                WHERE table_name = 'payment_sessions'
+                            )
+                            """
                         )
                         
+                        if table_check and table_check[0]['exists']:
+                            # Use secure session-based checkout
+                            checkout_session = create_stripe_checkout_session_secure(
+                                db_manager,
+                                user_data['user_id'],
+                                user_data['email']
+                            )
+                        else:
+                            # Use standard checkout
+                            checkout_session = create_stripe_checkout_session(
+                                user_data['user_id'],
+                                user_data['email']
+                            )
+                        
                         if checkout_session and checkout_session.url:
-                            st.session_state['checkout_url'] = checkout_session.url
-                            st.rerun()
+                            # Show the checkout link directly
+                            st.success("✅ Checkout session created!")
+                            st.markdown(f"### [🛒 Click here to complete payment]({checkout_session.url})")
+                            
+                            # Styled button alternative
+                            st.markdown(f"""
+                            <div style="text-align: center; margin: 20px;">
+                                <a href="{checkout_session.url}" target="_blank" style="
+                                    background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
+                                    color: #0D1117;
+                                    padding: 15px 40px;
+                                    text-decoration: none;
+                                    border-radius: 5px;
+                                    font-weight: bold;
+                                    font-size: 18px;
+                                    display: inline-block;
+                                    box-shadow: 0 5px 15px rgba(184, 134, 11, 0.3);
+                                ">Go to Secure Checkout</a>
+                            </div>
+                            """, unsafe_allow_html=True)
                         else:
                             st.error("Failed to create checkout session. Please try again.")
                 except Exception as e:
                     st.error(f"Failed to create checkout session: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
         return
     
     # Initialize Anthropic client
