@@ -50,6 +50,45 @@ def verify_payment(db_manager, auth_manager, session_id):
     
     try:
         # Retrieve session from Stripe
-        session = stripe.checkout.Session.retrieve(session_id)
+        session = stripe.checkout.Session.retrieve(session_id, expand=['subscription'])
         
-        if session.payment_status ==
+        if session.payment_status == 'paid':
+            user_id = session.metadata.get('user_id')
+            
+            if user_id:
+                # Update subscription status
+                subscription_end = datetime.now() + timedelta(days=30)
+                db_manager.update_user_subscription(
+                    user_id,
+                    'active',
+                    subscription_end,
+                    session.customer
+                )
+                
+                # Update payment record
+                db_manager.execute(
+                    "UPDATE payments SET status = %s WHERE stripe_session_id = %s",
+                    ('completed', session_id),
+                    fetch=False
+                )
+                
+                # Generate login token and send email
+                token = auth_manager.generate_login_token(user_id)
+                if token:
+                    user = db_manager.get_user_by_id(user_id)
+                    if user:
+                        send_login_email(user['email'], user['full_name'], token)
+                
+                return True
+        
+        return False
+        
+    except Exception as e:
+        print(f"Payment verification error: {e}")
+        return False
+
+def handle_payment_webhook(db_manager, auth_manager):
+    """Handle Stripe webhook for payment confirmation."""
+    # This would be implemented if using webhooks
+    # For now, we'll use the success URL approach
+    pass
