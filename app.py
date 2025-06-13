@@ -76,10 +76,39 @@ try:
         # Initialize database schema if needed
         if 'db_initialized' not in st.session_state:
             with st.spinner("Initializing database..."):
-                if db_manager.initialize_schema():
-                    st.session_state.db_initialized = True
-                else:
-                    st.error("Failed to initialize database schema.")
+                try:
+                    # First check if we can connect
+                    test_result = db_manager.execute("SELECT 1 as test")
+                    if test_result is None:
+                        st.error("Cannot connect to database")
+                        return
+                    
+                    # Check existing tables
+                    existing_tables = db_manager.get_existing_tables()
+                    st.info(f"Found existing tables: {', '.join(existing_tables) if existing_tables else 'None'}")
+                    
+                    # Try to initialize schema
+                    if db_manager.initialize_schema():
+                        st.session_state.db_initialized = True
+                        st.success("Database initialized successfully!")
+                    else:
+                        st.error("Failed to initialize database schema.")
+                        
+                        # Show more details
+                        st.error("Please check the console/terminal for error messages")
+                        
+                        # Try a simple query to verify connection
+                        test_query = db_manager.execute("SELECT COUNT(*) FROM users")
+                        if test_query is not None:
+                            st.success(f"But database is accessible. User count: {test_query[0]['count']}")
+                            # Force initialization as tables exist
+                            st.session_state.db_initialized = True
+                            st.info("Proceeding with existing schema...")
+                        return
+                except Exception as e:
+                    st.error(f"Schema initialization error: {str(e)}")
+                    if DEBUG:
+                        st.exception(e)
                     return
         
         # Check query parameters for login token
