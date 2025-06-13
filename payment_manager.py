@@ -23,15 +23,20 @@ def create_stripe_checkout_session(user_id, email):
     try:
         if not init_stripe():
             print("ERROR: Stripe initialization failed in create_checkout_session")
+            st.error("Stripe configuration error. Please contact support.")
             return None
         
         # Validate required secrets
+        missing_secrets = []
         if "STRIPE_PRICE_ID" not in st.secrets:
-            print("ERROR: STRIPE_PRICE_ID not found in secrets")
-            return None
-            
+            missing_secrets.append("STRIPE_PRICE_ID")
         if "APP_URL" not in st.secrets:
-            print("ERROR: APP_URL not found in secrets")
+            missing_secrets.append("APP_URL")
+            
+        if missing_secrets:
+            error_msg = f"Missing required secrets: {', '.join(missing_secrets)}"
+            print(f"ERROR: {error_msg}")
+            st.error(f"Configuration error: {error_msg}")
             return None
         
         price_id = st.secrets["STRIPE_PRICE_ID"]
@@ -39,6 +44,7 @@ def create_stripe_checkout_session(user_id, email):
         
         print(f"Creating checkout for user {user_id}, email {email}")
         print(f"Using price ID: {price_id}")
+        print(f"Using API key starting with: {st.secrets['STRIPE_SECRET_KEY'][:14]}...")
         print(f"Success URL: {app_url}?success=true&session_id={{CHECKOUT_SESSION_ID}}")
         print(f"Cancel URL: {app_url}?canceled=true")
         
@@ -63,15 +69,37 @@ def create_stripe_checkout_session(user_id, email):
         
         return checkout_session
         
+    except stripe.error.InvalidRequestError as e:
+        error_msg = f"Invalid request: {str(e)}"
+        print(f"Stripe InvalidRequestError: {error_msg}")
+        if "No such price" in str(e):
+            st.error("Invalid price configuration. Please contact support.")
+            print("ERROR: The price ID does not exist in your Stripe account or is from the wrong mode (test/live)")
+        else:
+            st.error(f"Invalid request: {str(e)}")
+        traceback.print_exc()
+        return None
+    except stripe.error.AuthenticationError as e:
+        print(f"Stripe AuthenticationError: {str(e)}")
+        st.error("Authentication failed. Please contact support.")
+        print("ERROR: Invalid API key or wrong mode (test/live)")
+        traceback.print_exc()
+        return None
     except stripe.error.StripeError as e:
-        print(f"Stripe API error: {str(e)}")
+        error_msg = f"Stripe error: {str(e)}"
+        print(f"Stripe API error: {error_msg}")
         print(f"Error type: {type(e).__name__}")
         if hasattr(e, 'user_message'):
             print(f"User message: {e.user_message}")
+            st.error(e.user_message)
+        else:
+            st.error("Payment processing error. Please try again.")
         traceback.print_exc()
         return None
     except Exception as e:
-        print(f"Unexpected error creating checkout session: {str(e)}")
+        error_msg = f"Unexpected error: {str(e)}"
+        print(f"Unexpected error creating checkout session: {error_msg}")
+        st.error("An unexpected error occurred. Please try again.")
         traceback.print_exc()
         return None
 
@@ -84,45 +112,86 @@ def handle_successful_payment(session_id, db_manager):
         
         print(f"Processing successful payment for session: {session_id}")
         
-        # Get the checkout session
-        checkout_session = stripe.checkout.Session.retrieve(
-            session_id,
-            expand=['customer', 'subscription']
-        )
+        # Get the checkout session with expanded data
+        try:
+            checkout_session = stripe.checkout.Session.retrieve(
+                session_id,
+                expand=['customer', 'subscription', 'line_items']
+            )
+        except stripe.error.StripeError as e:
+            print(f"ERROR: Failed to retrieve checkout session: {str(e)}")
+            return False
         
         print(f"Checkout session status: {checkout_session.payment_status}")
+        print(f"Checkout session data: {checkout_session}")
         
-        # Get user_id from metadata
+        # Get user_id from metadata or client_reference_id
         user_id = checkout_session.metadata.get("user_id")
         if not user_id:
-            print("ERROR: No user_id found in checkout session metadata")
-            # Try client_reference_id as fallback
             user_id = checkout_session.client_reference_id
-            if not user_id:
-                print("ERROR: No user_id found in client_reference_id either")
-                return False
+            print(f"Using client_reference_id as user_id: {user_id}")
+        
+        if not user_id:
+            print("ERROR: No user_id found in checkout session")
+            print(f"Metadata: {checkout_session.metadata}")
+            print(f"Client reference ID: {checkout_session.client_reference_id}")
+            return False
         
         print(f"Processing payment for user_id: {user_id}")
         
-        # Get subscription details
-        if hasattr(checkout_session, 'subscription'):
-            if isinstance(checkout_session.subscription, str):
-                # If it's a string ID, fetch the subscription
-                subscription = stripe.Subscription.retrieve(checkout_session.subscription)
+        # Verify user exists in database
+        user_check = db_manager.execute_query(
+            "SELECT user_id, email FROM users WHERE user_id = %s",
+            (user_id,)
+        )
+        
+        if not user_check:
+            print(f"ERROR: User {user_id} not found in database")
+            # Try to find by email as fallback
+            if checkout_session.customer_details and checkout_session.customer_details.email:
+                email = checkout_session.customer_details.email
+                print(f"Trying to find user by email: {email}")
+                user_check = db_manager.execute_query(
+                    "SELECT user_id, email FROM users WHERE email = %s",
+                    (email,)
+                )
+                if user_check:
+                    user_id = user_check[0]['user_id']
+                    print(f"Found user by email, user_id: {user_id}")
+                else:
+                    print(f"ERROR: No user found with email {email}")
+                    return False
             else:
-                # If it's already expanded
-                subscription = checkout_session.subscription
-                
-            print(f"Subscription ID: {subscription.id}")
-            print(f"Subscription status: {subscription.status}")
+                return False
+        
+        # Get subscription details
+        subscription_id = checkout_session.subscription
+        if not subscription_id:
+            print("ERROR: No subscription ID in checkout session")
+            return False
             
-            # Calculate subscription dates
-            subscription_start = datetime.fromtimestamp(subscription.current_period_start)
-            subscription_end = datetime.fromtimestamp(subscription.current_period_end)
+        print(f"Subscription ID: {subscription_id}")
+        
+        # Retrieve full subscription details
+        try:
+            if isinstance(subscription_id, str):
+                subscription = stripe.Subscription.retrieve(subscription_id)
+            else:
+                subscription = subscription_id
+        except stripe.error.StripeError as e:
+            print(f"ERROR: Failed to retrieve subscription: {str(e)}")
+            return False
             
-            print(f"Subscription period: {subscription_start} to {subscription_end}")
-            
-            # Update user subscription in database
+        print(f"Subscription status: {subscription.status}")
+        
+        # Calculate subscription dates
+        subscription_start = datetime.fromtimestamp(subscription.current_period_start)
+        subscription_end = datetime.fromtimestamp(subscription.current_period_end)
+        
+        print(f"Subscription period: {subscription_start} to {subscription_end}")
+        
+        # Update user subscription in database with better error handling
+        try:
             update_result = db_manager.execute_query(
                 """
                 UPDATE users 
@@ -132,6 +201,7 @@ def handle_successful_payment(session_id, db_manager):
                     stripe_customer_id = %s,
                     stripe_subscription_id = %s
                 WHERE user_id = %s
+                RETURNING user_id
                 """,
                 (
                     'active',
@@ -141,29 +211,36 @@ def handle_successful_payment(session_id, db_manager):
                     subscription.id,
                     user_id
                 ),
-                fetch=False,
+                fetch=True,
                 commit=True
             )
             
             if not update_result:
-                print("ERROR: Failed to update user subscription in database")
+                print(f"ERROR: Failed to update user subscription - no rows returned")
                 return False
+                
+            print(f"User subscription updated successfully for user_id: {update_result[0]['user_id']}")
             
-            print("User subscription updated successfully")
-            
-            # Record the payment
+        except Exception as e:
+            print(f"ERROR: Database update failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return False
+        
+        # Record the payment
+        try:
             payment_id = str(uuid.uuid4())
             
             # Get the amount from the subscription
-            amount = float(subscription.items.data[0].price.unit_amount) / 100  # Convert from pence/cents to pounds/dollars
+            amount = float(subscription.items.data[0].price.unit_amount) / 100
             currency = subscription.items.data[0].price.currency.upper()
             
             payment_result = db_manager.execute_query(
                 """
                 INSERT INTO payments (
                     payment_id, user_id, amount, currency, 
-                    payment_method, stripe_payment_id, status
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    payment_method, stripe_payment_id, status, payment_date
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     payment_id,
@@ -172,29 +249,42 @@ def handle_successful_payment(session_id, db_manager):
                     currency,
                     "card",
                     checkout_session.payment_intent or checkout_session.id,
-                    "completed"
+                    "completed",
+                    datetime.now()
                 ),
                 fetch=False,
                 commit=True
             )
             
-            if not payment_result:
+            if payment_result is False:
                 print("WARNING: Failed to record payment in database")
-                # Don't return False here as the subscription was already activated
             else:
-                print("Payment recorded successfully")
-            
+                print(f"Payment recorded successfully: {payment_id}")
+        
+        except Exception as e:
+            print(f"WARNING: Failed to record payment: {str(e)}")
+            # Don't return False here as subscription was already activated
+        
+        # Final verification
+        verify_result = db_manager.execute_query(
+            """
+            SELECT subscription_status, subscription_end 
+            FROM users 
+            WHERE user_id = %s
+            """,
+            (user_id,)
+        )
+        
+        if verify_result and verify_result[0]['subscription_status'] == 'active':
+            print(f"SUCCESS: Subscription verified as active for user {user_id}")
             return True
         else:
-            print("ERROR: No subscription found in checkout session")
+            print(f"ERROR: Subscription verification failed for user {user_id}")
             return False
             
-    except stripe.error.StripeError as e:
-        print(f"Stripe API error processing payment: {str(e)}")
-        traceback.print_exc()
-        return False
     except Exception as e:
-        print(f"Unexpected error processing payment: {str(e)}")
+        print(f"CRITICAL ERROR in handle_successful_payment: {str(e)}")
+        import traceback
         traceback.print_exc()
         return False
 
