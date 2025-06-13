@@ -505,40 +505,101 @@ def main():
     if "success" in query_params and "session_id" in query_params:
         session_id = query_params["session_id"]
         
-        # Process the successful payment
-        st.info("Processing your payment, please wait...")
+        # Show a nice UI while processing
+        st.title("Processing Your Payment")
+        st.info("🔄 Please wait while we activate your subscription...")
         
-        # Try to process payment without requiring user to be logged in
+        # Create a placeholder for status updates
+        status_placeholder = st.empty()
+        
         try:
-            success = handle_successful_payment(session_id, db_manager)
+            # Import the enhanced handler
+            from payment_manager import handle_successful_payment
+            
+            # Process the payment
+            with st.spinner("Verifying payment with Stripe..."):
+                success = handle_successful_payment(session_id, db_manager)
             
             if success:
-                st.success("✅ Subscription activated successfully! Welcome to CareerVertex Pro!")
+                status_placeholder.success("✅ Payment successful! Your subscription is now active.")
                 st.balloons()
                 
                 # Clear URL parameters
                 st.query_params.clear()
                 
-                # If user was logged out during redirect, show login prompt
-                if 'user_id' not in st.session_state:
-                    st.info("Please log in to access your subscription.")
-                    st.markdown("Your subscription has been activated. Log in with your email to start using CareerVertex Pro.")
-                else:
-                    # Force refresh to update subscription status
+                # Show login prompt
+                st.markdown("### Welcome to CareerVertex Pro!")
+                st.info("Please log in below to start using your subscription:")
+                
+                # Show login form
+                with st.form("post_payment_login"):
+                    email = st.text_input("Email")
+                    password = st.text_input("Password", type="password")
+                    
+                    if st.form_submit_button("Login", type="primary"):
+                        if email and password:
+                            success, result = auth_manager.login_user(email, password)
+                            if success:
+                                st.session_state['user_id'] = result['user_id']
+                                st.session_state['user_email'] = result['email']
+                                st.session_state['user_name'] = result['full_name'] if result['full_name'] else email
+                                st.session_state['user_data'] = result
+                                st.success("Login successful!")
+                                st.rerun()
+                            else:
+                                st.error(result)
+                
+                # Also show a button to go to main page
+                if st.button("Go to Login Page"):
+                    st.query_params.clear()
                     st.rerun()
+                    
+                # Stop here - don't show the rest of the app
+                return
+                
             else:
-                st.error("❌ There was an issue processing your payment. Please contact support.")
-                st.info("Your payment may have been successful but we couldn't activate your subscription. Please contact support with your session ID.")
+                status_placeholder.error("❌ There was an issue activating your subscription.")
+                st.warning("Your payment may have been processed, but we couldn't activate your subscription automatically.")
+                st.info("Please save this information and contact support:")
+                
+                # Show session ID for support
                 st.code(f"Session ID: {session_id}")
+                
+                # Try to get more info about the session
+                try:
+                    import stripe
+                    stripe.api_key = st.secrets.get("STRIPE_SECRET_KEY")
+                    checkout = stripe.checkout.Session.retrieve(session_id)
+                    if checkout.customer_details and checkout.customer_details.email:
+                        st.write(f"**Email used for payment:** {checkout.customer_details.email}")
+                except:
+                    pass
+                
+                st.markdown("**What to do next:**")
+                st.markdown("1. Check your email for a receipt from Stripe")
+                st.markdown("2. Contact support with the Session ID above")
+                st.markdown("3. We'll manually activate your subscription")
+                
                 # Clear URL parameters
                 st.query_params.clear()
+                
+                if st.button("Continue to Login"):
+                    st.rerun()
+                    
+                return
+                
         except Exception as e:
-            st.error(f"❌ Error processing payment: {str(e)}")
-            st.info("Please contact support with this information:")
-            st.code(f"Session ID: {session_id}\nError: {str(e)}")
-            print(f"Payment processing error: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            st.error(f"❌ An error occurred while processing your payment")
+            st.exception(e)
+            st.info("Please contact support with this information.")
+            
+            # Clear URL parameters
+            st.query_params.clear()
+            
+            if st.button("Continue"):
+                st.rerun()
+                
+            return
     
     # Check for cancelled payment
     if "canceled" in query_params:
