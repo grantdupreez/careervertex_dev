@@ -16,7 +16,7 @@ from auth_manager import AuthManager
 from utils import ErrorTracker, extract_text_from_file
 from ai_analysis import initialize_anthropic_client, parse_cv, analyze_cv_match
 from ai_analysis import generate_interview_tips, generate_cover_letter
-from payment_manager import create_stripe_checkout_session, handle_successful_payment
+from payment_manager import handle_payment_return, create_checkout_session_with_metadata, show_checkout_ui
 from ui_components import display_match_score, display_strengths_and_improvements
 from ui_components import display_recommendations, display_keywords, display_cv_summary
 from ui_components import display_user_profile, display_pricing, create_skills_chart
@@ -467,176 +467,16 @@ st.session_state['error_tracker'] = error_tracker
 def main():
     """Main application entry point."""
     
-    # Handle any pending Stripe checkout redirects FIRST
-    # Note: We've changed this to show links instead of auto-redirect due to Streamlit limitations
-    if 'checkout_url' in st.session_state and st.session_state['checkout_url']:
-        checkout_url = st.session_state['checkout_url']
-        del st.session_state['checkout_url']
-        
-        # Show checkout link page
-        st.title("Complete Your Subscription")
-        st.success("✅ Your checkout session has been created!")
-        st.markdown(f"### [🛒 Click here to complete payment on Stripe]({checkout_url})")
-        st.info("You'll be redirected to Stripe's secure checkout page. After payment, you'll return here.")
-        
-        # Styled button
-        st.markdown(f"""
-        <div style="text-align: center; margin: 30px;">
-            <a href="{checkout_url}" target="_blank" style="
-                background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
-                color: #0D1117;
-                padding: 20px 50px;
-                text-decoration: none;
-                border-radius: 8px;
-                font-weight: bold;
-                font-size: 20px;
-                display: inline-block;
-                box-shadow: 0 10px 25px rgba(184, 134, 11, 0.3);
-            ">Proceed to Payment →</a>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("---")
-        st.caption("After completing payment, you'll be redirected back to CareerVertex.")
-        return  # Stop here to show only the checkout link
+    # Handle payment returns FIRST before anything else
+    if handle_payment_return(db_manager, auth_manager):
+        return  # Payment was handled, stop here
     
-    # Check for Stripe session_id in URL params for payment completion
+    # Check for any other URL parameters that need handling
     query_params = st.query_params
-    if "success" in query_params and "session_id" in query_params:
-        session_id = query_params["session_id"]
-        
-        # Show a nice UI while processing
-        st.title("Processing Your Payment")
-        st.info("🔄 Please wait while we activate your subscription...")
-        
-        # Create a placeholder for status updates
-        status_placeholder = st.empty()
-        
-        try:
-            # Import the enhanced handlers
-            from payment_manager import handle_successful_payment_with_session, handle_successful_payment
-            
-            # First try the session-based handler
-            with st.spinner("Verifying payment with Stripe..."):
-                # Check if payment_sessions table exists
-                table_check = db_manager.execute_query(
-                    """
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables 
-                        WHERE table_name = 'payment_sessions'
-                    )
-                    """
-                )
-                
-                if table_check and table_check[0]['exists']:
-                    # Use enhanced session-based handler
-                    print("Using session-based payment handler")
-                    success = handle_successful_payment_with_session(session_id, db_manager)
-                else:
-                    # Fall back to standard handler
-                    print("Using standard payment handler (payment_sessions table not found)")
-                    success = handle_successful_payment(session_id, db_manager)
-            
-            if success:
-                status_placeholder.success("✅ Payment successful! Your subscription is now active.")
-                st.balloons()
-                
-                # Clear URL parameters
-                st.query_params.clear()
-                
-                # Show login prompt
-                st.markdown("### Welcome to CareerVertex Pro!")
-                st.info("Please log in below to start using your subscription:")
-                
-                # Show login form
-                with st.form("post_payment_login"):
-                    email = st.text_input("Email")
-                    password = st.text_input("Password", type="password")
-                    
-                    if st.form_submit_button("Login", type="primary"):
-                        if email and password:
-                            login_success, result = auth_manager.login_user(email, password)
-                            if login_success:
-                                st.session_state['user_id'] = result['user_id']
-                                st.session_state['user_email'] = result['email']
-                                st.session_state['user_name'] = result['full_name'] if result['full_name'] else email
-                                st.session_state['user_data'] = result
-                                st.success("Login successful!")
-                                st.rerun()
-                            else:
-                                st.error(result)
-                
-                # Also show a button to go to main page
-                if st.button("Go to Login Page"):
-                    st.query_params.clear()
-                    st.rerun()
-                    
-                # Stop here - don't show the rest of the app
-                return
-                
-            else:
-                status_placeholder.error("❌ There was an issue activating your subscription.")
-                st.warning("Your payment may have been processed, but we couldn't activate your subscription automatically.")
-                st.info("Please save this information and contact support:")
-                
-                # Show session ID for support
-                st.code(f"Session ID: {session_id}")
-                
-                # Try to get more info about the session
-                try:
-                    import stripe
-                    if "STRIPE_SECRET_KEY" in st.secrets:
-                        stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
-                        checkout = stripe.checkout.Session.retrieve(session_id)
-                        
-                        # Display helpful information
-                        if checkout.customer_details and checkout.customer_details.email:
-                            st.write(f"**Email used for payment:** {checkout.customer_details.email}")
-                        
-                        if checkout.payment_status:
-                            st.write(f"**Payment Status:** {checkout.payment_status}")
-                            
-                        # If payment was successful but activation failed, provide more context
-                        if checkout.payment_status == "paid":
-                            st.info("✅ Your payment was successful! The issue is with account activation.")
-                            st.markdown("Please contact support and they will manually activate your account.")
-                except Exception as e:
-                    print(f"Error retrieving checkout session details: {str(e)}")
-                
-                st.markdown("**What to do next:**")
-                st.markdown("1. Check your email for a receipt from Stripe")
-                st.markdown("2. Contact support with the Session ID above")
-                st.markdown("3. We'll manually activate your subscription within 24 hours")
-                
-                # Clear URL parameters
-                st.query_params.clear()
-                
-                if st.button("Continue to Login"):
-                    st.rerun()
-                    
-                return
-                
-        except Exception as e:
-            st.error(f"❌ An error occurred while processing your payment")
-            st.exception(e)
-            st.info("Please contact support with this information.")
-            
-            # Clear URL parameters
-            st.query_params.clear()
-            
-            if st.button("Continue"):
-                st.rerun()
-                
-            return
-    
-    # Check for cancelled payment
-    if "canceled" in query_params:
-        st.warning("Payment was cancelled. You can try again when you're ready.")
-        st.query_params.clear()
     
     # Check if we're in admin mode
     admin_mode = False
-    if "admin" in st.query_params:
+    if "admin" in query_params:
         # Admin authentication
         if auth_manager.check_admin_password():
             admin_mode = True
