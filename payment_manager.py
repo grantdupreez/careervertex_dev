@@ -5,6 +5,7 @@ import traceback
 import secrets
 import hashlib
 from datetime import datetime, timedelta
+from psycopg2.extras import Json  # This import was missing!
 
 def init_stripe():
     """Initialize Stripe with API key."""
@@ -291,7 +292,6 @@ def create_stripe_checkout_session_secure(db_manager, user_id, email):
         import traceback
         traceback.print_exc()
         return None
-
 
 def create_stripe_checkout_session(user_id, email):
     """Create a Stripe checkout session for subscription."""
