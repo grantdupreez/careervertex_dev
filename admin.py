@@ -6,7 +6,6 @@ import pandas as pd
 import bcrypt
 import time
 from functools import wraps
-import socket
 
 st.set_page_config(
     page_title="CareerVertex Admin",
@@ -25,18 +24,24 @@ ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")  # Change this!
 # Database connection with caching
 @st.cache_resource(ttl=60)  # Cache for 1 minute
 def test_db_connectivity():
-    """Test if database is reachable."""
+    """Test if database is reachable using actual connection."""
     try:
-        # Quick socket test first
-        host = st.secrets["DB_HOST"]
-        port = int(st.secrets["DB_PORT"])
-        
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)  # 2 second timeout for quick test
-        result = sock.connect_ex((host, port))
-        sock.close()
-        
-        return result == 0
+        # Use the same connection method as db_test.py
+        conn = psycopg2.connect(
+            dbname=st.secrets["DB_NAME"],
+            user=st.secrets["DB_USER"],
+            password=st.secrets["DB_PASSWORD"],
+            host=st.secrets["DB_HOST"],
+            port=st.secrets["DB_PORT"],
+            sslmode='require'
+        )
+        # Test with a simple query
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        result = cur.fetchone()
+        cur.close()
+        conn.close()
+        return result is not None
     except:
         return False
 
@@ -44,26 +49,16 @@ def with_db_connection(func):
     """Decorator to handle database connections and errors."""
     @wraps(func)
     def wrapper(*args, **kwargs):
-        if not test_db_connectivity():
-            st.error("🔴 Database is currently unreachable. Please check your connection.")
-            st.info("This could be due to network issues, firewall settings, or database maintenance.")
-            return None
-        
         try:
-            # Quick connection with short timeout
+            # Use the same connection method as db_test.py
             conn = psycopg2.connect(
                 dbname=st.secrets["DB_NAME"],
                 user=st.secrets["DB_USER"],
                 password=st.secrets["DB_PASSWORD"],
                 host=st.secrets["DB_HOST"],
                 port=st.secrets["DB_PORT"],
-                sslmode='require',
-                connect_timeout=5,  # Short timeout
-                options='-c statement_timeout=10000'  # 10 second query timeout
+                sslmode='require'
             )
-            
-            # Set connection to autocommit for read operations
-            conn.autocommit = True
             
             result = func(conn, *args, **kwargs)
             conn.close()
@@ -71,7 +66,7 @@ def with_db_connection(func):
             
         except psycopg2.OperationalError as e:
             st.error("🔴 Database connection failed")
-            st.info("Try refreshing the page or check your network connection.")
+            st.error(f"Error: {str(e)}")
             return None
         except Exception as e:
             st.error(f"Database error: {str(e)}")
@@ -287,8 +282,7 @@ def activate_subscription(user_id):
             password=st.secrets["DB_PASSWORD"],
             host=st.secrets["DB_HOST"],
             port=st.secrets["DB_PORT"],
-            sslmode='require',
-            connect_timeout=5
+            sslmode='require'
         )
         cur = conn.cursor()
         cur.execute("""
@@ -522,8 +516,7 @@ def clean_expired_tokens():
             password=st.secrets["DB_PASSWORD"],
             host=st.secrets["DB_HOST"],
             port=st.secrets["DB_PORT"],
-            sslmode='require',
-            connect_timeout=5
+            sslmode='require'
         )
         cur = conn.cursor()
         cur.execute("""
@@ -548,8 +541,7 @@ def update_expired_subscriptions():
             password=st.secrets["DB_PASSWORD"],
             host=st.secrets["DB_HOST"],
             port=st.secrets["DB_PORT"],
-            sslmode='require',
-            connect_timeout=5
+            sslmode='require'
         )
         cur = conn.cursor()
         cur.execute("""
