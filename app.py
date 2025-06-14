@@ -1,6 +1,7 @@
 import streamlit as st
 import sys
 import traceback
+import psycopg2  # Add this import
 
 # Page configuration
 st.set_page_config(
@@ -12,54 +13,6 @@ st.set_page_config(
 
 # Debug mode - set to False in production
 DEBUG = True
-
-def test_database_connection():
-    """Test basic database connection."""
-    try:
-        # First try direct connection like in test files
-        import psycopg2
-        print("Testing direct psycopg2 connection...")
-        
-        test_conn = psycopg2.connect(
-            dbname=st.secrets["DB_NAME"],
-            user=st.secrets["DB_USER"],
-            password=st.secrets["DB_PASSWORD"],
-            host=st.secrets["DB_HOST"],
-            port=st.secrets["DB_PORT"],
-            sslmode='require'
-        )
-        
-        # Test query
-        cur = test_conn.cursor()
-        cur.execute("SELECT 1 as test")
-        result = cur.fetchone()
-        cur.close()
-        test_conn.close()
-        
-        if result and result[0] == 1:
-            print("Direct connection successful!")
-            
-            # Now test DatabaseManager
-            from core.database import DatabaseManager
-            db = DatabaseManager()
-            
-            # Test DatabaseManager query
-            result = db.execute("SELECT 1 as test")
-            if result and result[0]['test'] == 1:
-                return True, db
-            else:
-                print(f"DatabaseManager query failed: {result}")
-                return False, None
-        else:
-            print("Direct connection query failed")
-            return False, None
-            
-    except Exception as e:
-        print(f"Database connection test failed: {e}")
-        # Show more detailed error in console
-        import traceback
-        traceback.print_exc()
-        return False, None
 
 def check_and_create_tables(db_manager):
     """Check existing tables and create missing ones."""
@@ -106,7 +59,6 @@ def main():
         from static.styles import CUSTOM_CSS
         st.markdown(f"<style>{CUSTOM_CSS}</style>", unsafe_allow_html=True)
     except ImportError:
-        # Continue without custom styles
         pass
     
     # Show title with styling
@@ -119,33 +71,48 @@ def main():
         </div>
     """, unsafe_allow_html=True)
     
-    # Step 1: Test database connection
-    with st.spinner("Connecting to database..."):
-        connected, db_manager = test_database_connection()
-    
-    if not connected:
+    # Step 1: Initialize database manager directly
+    try:
+        from core.database import DatabaseManager
+        db_manager = DatabaseManager()
+        
+        # Quick test to verify it works
+        test = db_manager.execute("SELECT 1")
+        if not test:
+            raise Exception("Database query failed")
+            
+    except Exception as e:
         st.error("❌ Database connection failed")
-        st.info("""
-        **Required Configuration:**
+        st.error(f"Error: {str(e)}")
         
-        Please ensure these secrets are set in `.streamlit/secrets.toml`:
-        ```toml
-        DB_HOST = "your-database-host"
-        DB_PORT = "5432"
-        DB_NAME = "your-database-name"
-        DB_USER = "your-username"
-        DB_PASSWORD = "your-password"
-        ```
-        """)
-        
-        # Show current configuration status
+        # Check configuration
         with st.expander("Configuration Status"):
             required_secrets = ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"]
             for secret in required_secrets:
                 if secret in st.secrets:
-                    st.success(f"✅ {secret} is configured")
+                    if secret != "DB_PASSWORD":
+                        st.success(f"✅ {secret} = {st.secrets[secret]}")
+                    else:
+                        st.success(f"✅ {secret} is configured")
                 else:
                     st.error(f"❌ {secret} is missing")
+        
+        # Try direct connection for debugging
+        if st.button("Test Direct Connection"):
+            try:
+                import psycopg2
+                conn = psycopg2.connect(
+                    dbname=st.secrets["DB_NAME"],
+                    user=st.secrets["DB_USER"],
+                    password=st.secrets["DB_PASSWORD"],
+                    host=st.secrets["DB_HOST"],
+                    port=st.secrets["DB_PORT"],
+                    sslmode='require'
+                )
+                conn.close()
+                st.success("Direct connection works! The issue is with DatabaseManager.")
+            except Exception as e:
+                st.error(f"Direct connection also failed: {e}")
         return
     
     # Step 2: Check and create tables if needed
