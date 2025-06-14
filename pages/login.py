@@ -2,7 +2,7 @@ import streamlit as st
 import time
 from core.payment import create_checkout_session
 
-def show_subscription_needed(db_manager):
+def show_subscription_needed(db_manager, auth_manager=None):
     """Show subscription page for users who need to subscribe."""
     user_id = st.session_state.get('temp_user_id')
     email = st.session_state.get('temp_email')
@@ -20,7 +20,13 @@ def show_subscription_needed(db_manager):
         return
     
     # Check if this is a new user or expired subscription
-    is_new_user = user.get('subscription_status') is None or user.get('subscription_status') == 'inactive'
+    if auth_manager:
+        has_ever_subscribed = auth_manager.has_ever_subscribed(user_id) if hasattr(auth_manager, 'has_ever_subscribed') else False
+    else:
+        # Fallback if auth_manager not provided
+        has_ever_subscribed = user.get('subscription_end') is not None or user.get('subscription_status') == 'active'
+    
+    is_new_user = not has_ever_subscribed
     
     st.markdown(f"""
         <div style='text-align: center; margin-bottom: 2rem;'>
@@ -106,7 +112,7 @@ def show_login_page(db_manager, auth_manager):
     
     # Check if we need to show subscription page
     if st.session_state.get('needs_subscription'):
-        show_subscription_needed(db_manager)
+        show_subscription_needed(db_manager, auth_manager)
         return
     
     # Login form with index.html styling
@@ -143,10 +149,8 @@ def show_login_page(db_manager, auth_manager):
                     user, message = auth_manager.login_user(email, password)
                     
                     if user:
-                        # Check if user has ever had a subscription
-                        has_subscription = user.get('subscription_status') is not None and user.get('subscription_status') != 'inactive'
-                        
-                        if has_subscription and auth_manager.check_subscription(user['user_id']):
+                        # Check if user has an active subscription
+                        if auth_manager.check_subscription(user['user_id']):
                             # Active subscriber - log them in
                             st.session_state.user_id = user['user_id']
                             st.session_state.user_data = user
@@ -157,7 +161,9 @@ def show_login_page(db_manager, auth_manager):
                             # User needs subscription (either new or expired)
                             st.session_state.temp_user_id = user['user_id']
                             st.session_state.temp_email = user['email']
+                            st.session_state.temp_name = user['full_name']
                             st.session_state.needs_subscription = True
+                            st.rerun()
                     else:
                         st.error(message)
     
