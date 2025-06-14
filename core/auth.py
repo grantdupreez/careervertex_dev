@@ -40,6 +40,13 @@ class AuthManager:
         if not self.verify_password(password, user['password_hash']):
             return None, "Invalid email or password"
         
+        # Update last login
+        self.db.execute(
+            "UPDATE users SET last_login = %s WHERE user_id = %s",
+            (datetime.now(), user['user_id']),
+            fetch=False
+        )
+        
         return user, "Login successful"
     
     def generate_login_token(self, user_id):
@@ -61,7 +68,23 @@ class AuthManager:
         if not user:
             return False
         
+        # Check if user has ever had a subscription
+        # If subscription_status is None or 'inactive' and they've never had a subscription end date,
+        # they're a new user who needs to subscribe
+        if user['subscription_status'] is None or (user['subscription_status'] == 'inactive' and user['subscription_end'] is None):
+            return False
+            
+        # Check if subscription is active and not expired
         if user['subscription_status'] == 'active' and user['subscription_end']:
             return user['subscription_end'] > datetime.now()
         
         return False
+    
+    def has_ever_subscribed(self, user_id):
+        """Check if user has ever had a subscription."""
+        user = self.db.get_user_by_id(user_id)
+        if not user:
+            return False
+        
+        # User has subscribed if they have a subscription_end date or active status
+        return user['subscription_end'] is not None or user['subscription_status'] == 'active'
