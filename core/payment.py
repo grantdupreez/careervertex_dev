@@ -1,7 +1,6 @@
 import streamlit as st
 import stripe
 from datetime import datetime, timedelta
-from utils.email import send_login_email
 
 def init_stripe():
     """Initialize Stripe with API key."""
@@ -34,7 +33,7 @@ def create_checkout_session(db_manager, user_id, email):
             }
         )
         
-        # Save payment record
+        # Save payment record as pending
         db_manager.save_payment(user_id, session.id, 25.00, 'pending')
         
         return session.url
@@ -43,10 +42,10 @@ def create_checkout_session(db_manager, user_id, email):
         print(f"Checkout session error: {e}")
         return None
 
-def verify_payment(db_manager, auth_manager, session_id):
-    """Verify payment and activate subscription."""
+def verify_payment_and_login(db_manager, auth_manager, session_id):
+    """Verify payment and automatically log the user in."""
     if not init_stripe():
-        return False
+        return False, None
     
     try:
         # Retrieve session from Stripe
@@ -72,23 +71,97 @@ def verify_payment(db_manager, auth_manager, session_id):
                     fetch=False
                 )
                 
-                # Generate login token and send email
-                token = auth_manager.generate_login_token(user_id)
-                if token:
-                    user = db_manager.get_user_by_id(user_id)
-                    if user:
-                        send_login_email(user['email'], user['full_name'], token)
+                # Get user data for auto-login
+                user_data = db_manager.get_user_by_id(user_id)
                 
-                return True
+                return True, user_data
         
-        return False
+        return False, None
         
     except Exception as e:
         print(f"Payment verification error: {e}")
+        return False, None
+
+def handle_stripe_webhook(request_body, signature_header, db_manager):
+    """Handle Stripe webhook events for real-time payment updates."""
+    if not init_stripe():
+        return False
+    
+    try:
+        # Verify webhook signature
+        webhook_secret = st.secrets.get("STRIPE_WEBHOOK_SECRET")
+        if not webhook_secret:
+            print("Warning: No webhook secret configured")
+            return False
+        
+        event = stripe.Webhook.construct_event(
+            request_body, signature_header, webhook_secret
+        )
+        
+        # Handle the event
+        if event['type'] == 'checkout.session.completed':
+            session = event['data']['object']
+            
+            # Update user subscription
+            user_id = session['metadata'].get('user_id')
+            if user_id:
+                subscription_end = datetime.now() + timedelta(days=30)
+                db_manager.update_user_subscription(
+                    user_id,
+                    'active',
+                    subscription_end,
+                    session['customer']
+                )
+                
+                # Update payment status
+                db_manager.execute(
+                    "UPDATE payments SET status = %s WHERE stripe_session_id = %s",
+                    ('completed', session['id']),
+                    fetch=False
+                )
+                
+                print(f"Subscription activated for user {user_id}")
+                
+        elif event['type'] == 'customer.subscription.deleted':
+            subscription = event['data']['object']
+            
+            # Find user by stripe customer ID and deactivate
+            result = db_manager.execute(
+                "SELECT user_id FROM users WHERE stripe_customer_id = %s",
+                (subscription['customer'],)
+            )
+            
+            if result:
+                user_id = result[0]['user_id']
+                db_manager.execute(
+                    "UPDATE users SET subscription_status = %s WHERE user_id = %s",
+                    ('inactive', user_id),
+                    fetch=False
+                )
+                print(f"Subscription cancelled for user {user_id}")
+        
+        return True
+        
+    except stripe.error.SignatureVerificationError as e:
+        print(f"Webhook signature verification failed: {e}")
+        return False
+    except Exception as e:
+        print(f"Webhook processing error: {e}")
         return False
 
-def handle_payment_webhook(db_manager, auth_manager):
-    """Handle Stripe webhook for payment confirmation."""
-    # This would be implemented if using webhooks
-    # For now, we'll use the success URL approach
-    pass
+def check_and_update_subscription_status(db_manager, user_id):
+    """Check if subscription is still valid and update if expired."""
+    user = db_manager.get_user_by_id(user_id)
+    
+    if user and user['subscription_status'] == 'active':
+        if user['subscription_end'] and user['subscription_end'] < datetime.now():
+            # Subscription has expired
+            db_manager.execute(
+                "UPDATE users SET subscription_status = %s WHERE user_id = %s",
+                ('expired', user_id),
+                fetch=False
+            )
+            return False
+        return True
+    
+    return False
