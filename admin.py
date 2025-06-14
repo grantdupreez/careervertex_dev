@@ -12,19 +12,12 @@ st.set_page_config(
 )
 
 # Admin authentication
-ADMIN_EMAILS = st.secrets.get("ADMIN_EMAILS", ["admin@careervertex.com"]).split(",")
-ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")  # Change this!
+def get_admin_emails():
+    """Get admin emails from secrets."""
+    emails = st.secrets.get("ADMIN_EMAILS", "admin@careervertex.com")
+    return [email.strip() for email in emails.split(",")]
 
-def get_connection():
-    """Get database connection."""
-    return psycopg2.connect(
-        dbname=st.secrets["DB_NAME"],
-        user=st.secrets["DB_USER"],
-        password=st.secrets["DB_PASSWORD"],
-        host=st.secrets["DB_HOST"],
-        port=st.secrets["DB_PORT"],
-        sslmode='require'
-    )
+ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")  # Change this!
 
 def check_admin_auth():
     """Simple admin authentication."""
@@ -39,7 +32,8 @@ def check_admin_auth():
             password = st.text_input("Password", type="password")
             
             if st.form_submit_button("Login"):
-                if email.lower() in [e.lower() for e in ADMIN_EMAILS] and password == ADMIN_PASSWORD:
+                admin_emails = get_admin_emails()
+                if email.lower() in [e.lower() for e in admin_emails] and password == ADMIN_PASSWORD:
                     st.session_state.admin_authenticated = True
                     st.success("✅ Admin access granted")
                     st.rerun()
@@ -53,6 +47,21 @@ def main():
     check_admin_auth()
     
     st.title("🔧 CareerVertex Admin Panel")
+    
+    # Test database connection first
+    try:
+        test_conn = psycopg2.connect(
+            dbname=st.secrets["DB_NAME"],
+            user=st.secrets["DB_USER"],
+            password=st.secrets["DB_PASSWORD"],
+            host=st.secrets["DB_HOST"],
+            port=st.secrets["DB_PORT"],
+            sslmode='require'
+        )
+        test_conn.close()
+    except Exception as e:
+        st.error(f"❌ Database connection failed: {e}")
+        st.stop()
     
     # Sidebar navigation
     st.sidebar.title("Navigation")
@@ -89,7 +98,15 @@ def show_dashboard():
     st.header("📊 Admin Dashboard")
     
     try:
-        conn = get_connection()
+        # Direct connection
+        conn = psycopg2.connect(
+            dbname=st.secrets["DB_NAME"],
+            user=st.secrets["DB_USER"],
+            password=st.secrets["DB_PASSWORD"],
+            host=st.secrets["DB_HOST"],
+            port=st.secrets["DB_PORT"],
+            sslmode='require'
+        )
         cur = conn.cursor(cursor_factory=DictCursor)
         
         # Key metrics
@@ -165,7 +182,15 @@ def show_user_management():
     
     # User list
     try:
-        conn = get_connection()
+        # Direct connection
+        conn = psycopg2.connect(
+            dbname=st.secrets["DB_NAME"],
+            user=st.secrets["DB_USER"],
+            password=st.secrets["DB_PASSWORD"],
+            host=st.secrets["DB_HOST"],
+            port=st.secrets["DB_PORT"],
+            sslmode='require'
+        )
         cur = conn.cursor(cursor_factory=DictCursor)
         
         # Build query
@@ -220,25 +245,45 @@ def show_user_management():
                             new_password = "password123"  # Generate random password in production
                             password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
                             
-                            cur2 = conn.cursor()
+                            # New connection for update
+                            conn2 = psycopg2.connect(
+                                dbname=st.secrets["DB_NAME"],
+                                user=st.secrets["DB_USER"],
+                                password=st.secrets["DB_PASSWORD"],
+                                host=st.secrets["DB_HOST"],
+                                port=st.secrets["DB_PORT"],
+                                sslmode='require'
+                            )
+                            cur2 = conn2.cursor()
                             cur2.execute("UPDATE users SET password_hash = %s WHERE user_id = %s", 
                                        (password_hash, user['user_id']))
-                            conn.commit()
+                            conn2.commit()
                             cur2.close()
+                            conn2.close()
                             
                             st.success(f"Password reset to: {new_password}")
                     
                     with col3:
                         if st.button("💳 Activate Sub", key=f"activate_{user['user_id']}"):
-                            cur2 = conn.cursor()
+                            # New connection for update
+                            conn2 = psycopg2.connect(
+                                dbname=st.secrets["DB_NAME"],
+                                user=st.secrets["DB_USER"],
+                                password=st.secrets["DB_PASSWORD"],
+                                host=st.secrets["DB_HOST"],
+                                port=st.secrets["DB_PORT"],
+                                sslmode='require'
+                            )
+                            cur2 = conn2.cursor()
                             cur2.execute("""
                                 UPDATE users 
                                 SET subscription_status = 'active',
                                     subscription_end = %s
                                 WHERE user_id = %s
                             """, (datetime.now() + timedelta(days=30), user['user_id']))
-                            conn.commit()
+                            conn2.commit()
                             cur2.close()
+                            conn2.close()
                             
                             st.success("Subscription activated for 30 days")
                             st.rerun()
@@ -246,10 +291,20 @@ def show_user_management():
                     with col4:
                         if st.button("🗑️ Delete", key=f"delete_{user['user_id']}"):
                             if st.checkbox(f"Confirm delete {user['email']}", key=f"confirm_{user['user_id']}"):
-                                cur2 = conn.cursor()
+                                # New connection for delete
+                                conn2 = psycopg2.connect(
+                                    dbname=st.secrets["DB_NAME"],
+                                    user=st.secrets["DB_USER"],
+                                    password=st.secrets["DB_PASSWORD"],
+                                    host=st.secrets["DB_HOST"],
+                                    port=st.secrets["DB_PORT"],
+                                    sslmode='require'
+                                )
+                                cur2 = conn2.cursor()
                                 cur2.execute("DELETE FROM users WHERE user_id = %s", (user['user_id'],))
-                                conn.commit()
+                                conn2.commit()
                                 cur2.close()
+                                conn2.close()
                                 
                                 st.success("User deleted")
                                 st.rerun()
@@ -267,7 +322,15 @@ def show_subscription_management():
     st.header("💳 Subscription Management")
     
     try:
-        conn = get_connection()
+        # Direct connection
+        conn = psycopg2.connect(
+            dbname=st.secrets["DB_NAME"],
+            user=st.secrets["DB_USER"],
+            password=st.secrets["DB_PASSWORD"],
+            host=st.secrets["DB_HOST"],
+            port=st.secrets["DB_PORT"],
+            sslmode='require'
+        )
         cur = conn.cursor(cursor_factory=DictCursor)
         
         # Subscription stats
@@ -366,7 +429,7 @@ def show_subscription_management():
                     'Name': payment['full_name'],
                     'Amount': f"£{payment['amount']:.2f}",
                     'Status': payment['status'],
-                    'Session ID': payment['stripe_session_id'][:20] + '...'
+                    'Session ID': payment['stripe_session_id'][:20] + '...' if payment['stripe_session_id'] else 'N/A'
                 })
             
             df = pd.DataFrame(payment_data)
@@ -383,7 +446,15 @@ def show_analytics():
     st.header("📈 Analytics")
     
     try:
-        conn = get_connection()
+        # Direct connection
+        conn = psycopg2.connect(
+            dbname=st.secrets["DB_NAME"],
+            user=st.secrets["DB_USER"],
+            password=st.secrets["DB_PASSWORD"],
+            host=st.secrets["DB_HOST"],
+            port=st.secrets["DB_PORT"],
+            sslmode='require'
+        )
         cur = conn.cursor(cursor_factory=DictCursor)
         
         # User growth chart
@@ -479,7 +550,14 @@ def show_database_tools():
     with col1:
         if st.button("📥 Export Users CSV"):
             try:
-                conn = get_connection()
+                conn = psycopg2.connect(
+                    dbname=st.secrets["DB_NAME"],
+                    user=st.secrets["DB_USER"],
+                    password=st.secrets["DB_PASSWORD"],
+                    host=st.secrets["DB_HOST"],
+                    port=st.secrets["DB_PORT"],
+                    sslmode='require'
+                )
                 query = """
                     SELECT email, full_name, subscription_status, 
                            subscription_end, created_at, last_login
@@ -503,7 +581,14 @@ def show_database_tools():
     with col2:
         if st.button("📥 Export Payments CSV"):
             try:
-                conn = get_connection()
+                conn = psycopg2.connect(
+                    dbname=st.secrets["DB_NAME"],
+                    user=st.secrets["DB_USER"],
+                    password=st.secrets["DB_PASSWORD"],
+                    host=st.secrets["DB_HOST"],
+                    port=st.secrets["DB_PORT"],
+                    sslmode='require'
+                )
                 query = """
                     SELECT p.created_at, u.email, p.amount, p.status, p.stripe_session_id
                     FROM payments p
@@ -532,7 +617,14 @@ def show_database_tools():
     with col1:
         if st.button("🧹 Clean Expired Tokens"):
             try:
-                conn = get_connection()
+                conn = psycopg2.connect(
+                    dbname=st.secrets["DB_NAME"],
+                    user=st.secrets["DB_USER"],
+                    password=st.secrets["DB_PASSWORD"],
+                    host=st.secrets["DB_HOST"],
+                    port=st.secrets["DB_PORT"],
+                    sslmode='require'
+                )
                 cur = conn.cursor()
                 
                 cur.execute("""
@@ -553,7 +645,14 @@ def show_database_tools():
     with col2:
         if st.button("🔄 Update Expired Subscriptions"):
             try:
-                conn = get_connection()
+                conn = psycopg2.connect(
+                    dbname=st.secrets["DB_NAME"],
+                    user=st.secrets["DB_USER"],
+                    password=st.secrets["DB_PASSWORD"],
+                    host=st.secrets["DB_HOST"],
+                    port=st.secrets["DB_PORT"],
+                    sslmode='require'
+                )
                 cur = conn.cursor()
                 
                 cur.execute("""
@@ -581,7 +680,14 @@ def show_database_tools():
     if st.button("🚀 Execute Query"):
         if sql_query:
             try:
-                conn = get_connection()
+                conn = psycopg2.connect(
+                    dbname=st.secrets["DB_NAME"],
+                    user=st.secrets["DB_USER"],
+                    password=st.secrets["DB_PASSWORD"],
+                    host=st.secrets["DB_HOST"],
+                    port=st.secrets["DB_PORT"],
+                    sslmode='require'
+                )
                 
                 # Only allow SELECT queries for safety
                 if sql_query.strip().upper().startswith("SELECT"):
