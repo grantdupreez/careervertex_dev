@@ -9,30 +9,27 @@ class DatabaseManager:
     """Simplified database manager for CareerVertex."""
     
     def __init__(self):
-        self.connection_params = self._get_connection_params()
-    
-    def _get_connection_params(self):
-        """Get database connection parameters from Streamlit secrets."""
+        # Test connection on initialization
         try:
-            # Use the standard psycopg2 parameter names
-            return {
-                'host': st.secrets["DB_HOST"],
-                'port': st.secrets["DB_PORT"],
-                'database': st.secrets["DB_NAME"],  # psycopg2 uses 'database' not 'dbname'
-                'user': st.secrets["DB_USER"],
-                'password': st.secrets["DB_PASSWORD"],
-                'sslmode': 'require'
-            }
-        except KeyError as e:
-            st.error(f"Missing database configuration: {e}")
-            return None
+            test_conn = self.get_connection()
+            if test_conn:
+                test_conn.close()
+        except Exception as e:
+            print(f"Database initialization error: {e}")
     
     def get_connection(self):
         """Get a database connection."""
-        if not self.connection_params:
-            return None
         try:
-            return psycopg2.connect(**self.connection_params)
+            # Use the simple connection method that works in test files
+            conn = psycopg2.connect(
+                dbname=st.secrets["DB_NAME"],
+                user=st.secrets["DB_USER"],
+                password=st.secrets["DB_PASSWORD"],
+                host=st.secrets["DB_HOST"],
+                port=st.secrets["DB_PORT"],
+                sslmode='require'
+            )
+            return conn
         except Exception as e:
             print(f"Database connection error: {e}")
             traceback.print_exc()
