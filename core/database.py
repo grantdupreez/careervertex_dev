@@ -195,7 +195,41 @@ class DatabaseManager:
         for index_query in index_queries:
             self.execute(index_query, fetch=False)
         
+        # Add missing columns to existing tables
+        self._add_missing_columns()
+        
         return tables_created, tables_checked
+    
+    def _add_missing_columns(self):
+        """Add missing columns to existing tables."""
+        # Check and add missing columns to users table
+        user_columns = [
+            ('last_login', 'ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMP'),
+            ('subscription_start', 'ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_start TIMESTAMP'),
+            ('stripe_subscription_id', 'ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(255)')
+        ]
+        
+        for column_name, alter_query in user_columns:
+            try:
+                # PostgreSQL 9.6+ supports IF NOT EXISTS
+                self.execute(alter_query, fetch=False)
+                print(f"✓ Ensured column {column_name} exists")
+            except Exception as e:
+                # For older PostgreSQL versions, check if column exists first
+                try:
+                    check_query = """
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'users' AND column_name = %s
+                    """
+                    exists = self.execute(check_query, (column_name,))
+                    if not exists:
+                        # Try without IF NOT EXISTS
+                        simple_query = alter_query.replace(' IF NOT EXISTS', '')
+                        self.execute(simple_query, fetch=False)
+                        print(f"✓ Added column {column_name}")
+                except Exception as e2:
+                    print(f"Could not add column {column_name}: {e2}")
     
     def initialize_schema(self):
         """Initialize database schema - wrapper for compatibility."""
@@ -231,17 +265,36 @@ class DatabaseManager:
     
     def update_user_subscription(self, user_id, status, end_date, stripe_customer_id):
         """Update user subscription status."""
-        query = """
-            UPDATE users 
-            SET subscription_status = %s, 
-                subscription_end = %s,
-                stripe_customer_id = %s,
-                subscription_start = CASE 
-                    WHEN subscription_start IS NULL THEN NOW() 
-                    ELSE subscription_start 
-                END
-            WHERE user_id = %s
+        # First check if subscription_start column exists
+        columns_query = """
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'users' AND column_name = 'subscription_start'
         """
+        has_start_column = self.execute(columns_query)
+        
+        if has_start_column:
+            query = """
+                UPDATE users 
+                SET subscription_status = %s, 
+                    subscription_end = %s,
+                    stripe_customer_id = %s,
+                    subscription_start = CASE 
+                        WHEN subscription_start IS NULL THEN NOW() 
+                        ELSE subscription_start 
+                    END
+                WHERE user_id = %s
+            """
+        else:
+            # Simpler query without subscription_start
+            query = """
+                UPDATE users 
+                SET subscription_status = %s, 
+                    subscription_end = %s,
+                    stripe_customer_id = %s
+                WHERE user_id = %s
+            """
+        
         return self.execute(query, (status, end_date, stripe_customer_id, user_id), fetch=False)
     
     def set_login_token(self, user_id, token, expires):
