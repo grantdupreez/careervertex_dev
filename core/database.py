@@ -14,12 +14,13 @@ class DatabaseManager:
     def _get_connection_params(self):
         """Get database connection parameters from Streamlit secrets."""
         try:
+            # Use the standard psycopg2 parameter names
             return {
-                'dbname': st.secrets["DB_NAME"],
-                'user': st.secrets["DB_USER"],
-                'password': st.secrets["DB_PASSWORD"],
                 'host': st.secrets["DB_HOST"],
                 'port': st.secrets["DB_PORT"],
+                'database': st.secrets["DB_NAME"],  # psycopg2 uses 'database' not 'dbname'
+                'user': st.secrets["DB_USER"],
+                'password': st.secrets["DB_PASSWORD"],
                 'sslmode': 'require'
             }
         except KeyError as e:
@@ -34,6 +35,7 @@ class DatabaseManager:
             return psycopg2.connect(**self.connection_params)
         except Exception as e:
             print(f"Database connection error: {e}")
+            traceback.print_exc()
             return None
     
     def execute(self, query, params=None, fetch=True):
