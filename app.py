@@ -68,9 +68,23 @@ def check_and_create_tables(db_manager):
 def main():
     """Main application entry point."""
     
-    # Show title
-    st.title("🎯 CareerVertex")
-    st.markdown("*AI-Powered CV Analysis for Perfect Job Matches*")
+    # Load custom styles FIRST
+    try:
+        from static.styles import CUSTOM_CSS
+        st.markdown(f"<style>{CUSTOM_CSS}</style>", unsafe_allow_html=True)
+    except ImportError:
+        # Continue without custom styles
+        pass
+    
+    # Show title with styling
+    st.markdown("""
+        <div style='text-align: center; padding: 2rem 0;'>
+            <h1 style='font-size: 3rem; margin-bottom: 0.5rem;'>
+                <span style='color: #0A1F3D;'>Career</span><span style='color: #B8860B;'>Vertex</span>
+            </h1>
+            <p style='font-size: 1.2rem; color: #555;'>AI-Powered CV Analysis for Perfect Job Matches</p>
+        </div>
+    """, unsafe_allow_html=True)
     
     # Step 1: Test database connection
     with st.spinner("Connecting to database..."):
@@ -108,74 +122,6 @@ def main():
                 st.session_state.db_ready = True
             else:
                 st.error("❌ Could not initialize database tables")
-                
-                # Show manual creation option
-                st.warning("""
-                **Manual Setup Required**
-                
-                Your database user may not have CREATE permissions.
-                Please run the SQL schema manually in your database.
-                """)
-                
-                with st.expander("📋 SQL Schema"):
-                    st.code("""
--- Create tables
-CREATE TABLE IF NOT EXISTS users (
-    user_id UUID PRIMARY KEY,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    full_name VARCHAR(255),
-    subscription_status VARCHAR(50) DEFAULT 'inactive',
-    subscription_start TIMESTAMP,
-    subscription_end TIMESTAMP,
-    stripe_customer_id VARCHAR(255),
-    stripe_subscription_id VARCHAR(255),
-    created_at TIMESTAMP DEFAULT NOW(),
-    last_login TIMESTAMP,
-    login_token VARCHAR(255),
-    token_expires TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS cvs (
-    cv_id UUID PRIMARY KEY,
-    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
-    cv_name VARCHAR(255) NOT NULL,
-    cv_text TEXT,
-    parsed_data JSONB,
-    uploaded_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS analyses (
-    analysis_id UUID PRIMARY KEY,
-    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
-    cv_id UUID REFERENCES cvs(cv_id) ON DELETE CASCADE,
-    job_title VARCHAR(255),
-    company VARCHAR(255),
-    job_description TEXT,
-    parsed_job JSONB,
-    analysis_result JSONB,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS payments (
-    payment_id UUID PRIMARY KEY,
-    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
-    stripe_session_id VARCHAR(255),
-    amount DECIMAL(10, 2),
-    status VARCHAR(50),
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- Create indexes
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-CREATE INDEX IF NOT EXISTS idx_users_token ON users(login_token);
-CREATE INDEX IF NOT EXISTS idx_analyses_user ON analyses(user_id);
-CREATE INDEX IF NOT EXISTS idx_cvs_user ON cvs(user_id);
-                    """, language="sql")
-                
-                if st.button("🔄 Retry After Manual Setup"):
-                    del st.session_state['db_ready']
-                    st.rerun()
                 return
     
     # Step 3: Initialize auth manager
@@ -196,56 +142,58 @@ CREATE INDEX IF NOT EXISTS idx_cvs_user ON cvs(user_id);
         st.info("Make sure all files are in the correct directories: core/, pages/, etc.")
         return
     
-    # Step 5: Load styles (optional)
-    try:
-        from static.styles import CUSTOM_CSS
-        st.markdown(f"<style>{CUSTOM_CSS}</style>", unsafe_allow_html=True)
-    except ImportError:
-        # Continue without custom styles
-        pass
-    
-    # Step 6: Check for login token in URL
+    # Step 5: Check for payment success callback
     query_params = st.query_params
-    if "token" in query_params:
-        token = query_params["token"]
-        user_data = auth_manager.verify_login_token(token)
-        if user_data:
-            st.session_state.user_id = user_data['user_id']
-            st.session_state.user_data = user_data
-            st.query_params.clear()
-            st.success("✅ Login successful!")
-            st.rerun()
-    
-    # Step 7: Check for payment success
     if "payment" in query_params:
         if query_params["payment"] == "success" and "session_id" in query_params:
-            st.success("✅ Payment received! Check your email for the login link.")
+            session_id = query_params["session_id"]
+            
+            # Process the payment
+            from core.payment import verify_payment_and_login
+            success, user_data = verify_payment_and_login(db_manager, auth_manager, session_id)
+            
+            if success and user_data:
+                st.session_state.user_id = user_data['user_id']
+                st.session_state.user_data = user_data
+                st.query_params.clear()
+                st.success("✅ Payment successful! Welcome to CareerVertex Pro!")
+                st.rerun()
+            else:
+                st.error("Failed to verify payment. Please contact support.")
+                st.query_params.clear()
+        elif query_params["payment"] == "cancelled":
+            st.warning("Payment was cancelled. You can try again when you're ready.")
             st.query_params.clear()
     
-    # Step 8: Route based on authentication
+    # Step 6: Route based on authentication
     if 'user_id' in st.session_state:
         # User is logged in - show dashboard
         show_dashboard(db_manager, auth_manager)
     else:
-        # User not logged in - show login/registration
+        # User not logged in - show login/registration with proper styling
         st.markdown("---")
         
-        # Create centered layout
+        # Create centered layout with styled background
+        st.markdown("""
+            <div style='background: linear-gradient(135deg, #F8F9FA 0%, #E1E5EA 100%); 
+                        padding: 3rem 0; margin: -1rem -5rem 2rem -5rem;'>
+                <div style='max-width: 800px; margin: 0 auto; text-align: center;'>
+                    <h2 style='color: #0A1F3D; font-size: 2.5rem; margin-bottom: 1rem;'>
+                        Perfect CV-Job <span style='background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
+                        -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>Match Every Time</span>
+                    </h2>
+                    <p style='font-size: 1.1em; color: #555; max-width: 600px; margin: 0 auto;'>
+                        CareerVertex's AI-powered CV matching tool analyses your CV against job descriptions 
+                        to ensure you position yourself as the perfect candidate.
+                    </p>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+        
         col1, col2, col3 = st.columns([1, 2, 1])
         
         with col2:
-            # Welcome section
-            st.markdown("""
-            <div style='text-align: center; padding: 2rem 0;'>
-                <h2>Welcome to CareerVertex</h2>
-                <p style='font-size: 1.1em; color: #666;'>
-                    Upload your CV and get instant AI-powered analysis to match any job description.
-                    Improve your chances with tailored suggestions and cover letters.
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Login/Register tabs
+            # Login/Register tabs with custom styling
             tab1, tab2 = st.tabs(["🔑 Login", "📝 Register"])
             
             with tab1:
@@ -254,36 +202,79 @@ CREATE INDEX IF NOT EXISTS idx_cvs_user ON cvs(user_id);
             with tab2:
                 show_registration_page(db_manager, auth_manager)
         
-        # Footer info
+        # Features section with index.html styling
         st.markdown("---")
-        col1, col2, col3 = st.columns(3)
+        st.markdown("""
+            <div style='background-color: white; padding: 3rem 0; margin: 0 -5rem;'>
+                <div style='max-width: 1200px; margin: 0 auto; padding: 0 2rem;'>
+                    <h2 style='text-align: center; color: #0A1F3D; font-size: 2.5rem; margin-bottom: 3rem;'>
+                        Core Features
+                    </h2>
+                    <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem;'>
+        """, unsafe_allow_html=True)
         
-        with col1:
-            st.markdown("""
-            **✨ Features**
-            - AI-powered CV analysis
-            - Job match scoring
-            - Keyword optimization
-            - Cover letter generation
-            """)
+        features = [
+            {
+                "icon": "🎯",
+                "title": "AI Keyword Analysis",
+                "description": "Our proprietary algorithm identifies critical keywords from job descriptions that match your experience."
+            },
+            {
+                "icon": "📊",
+                "title": "Match Score Analytics",
+                "description": "Receive a detailed match score showing how well your CV aligns with specific job requirements."
+            },
+            {
+                "icon": "💼",
+                "title": "Industry Insights",
+                "description": "Leverage industry-specific data to understand what skills are most valued in your target roles."
+            }
+        ]
         
-        with col2:
-            st.markdown("""
-            **💎 Benefits**
-            - Unlimited analyses
-            - Multiple CV storage
-            - Interview tips
-            - Regular updates
-            """)
+        cols = st.columns(3)
+        for idx, feature in enumerate(features):
+            with cols[idx]:
+                st.markdown(f"""
+                    <div style='background: #F8F9FA; border-radius: 5px; padding: 2rem; 
+                                box-shadow: 0 10px 30px rgba(0,0,0,0.03); border: 1px solid #E1E5EA;
+                                transition: all 0.3s ease; height: 100%;'>
+                        <div style='font-size: 3rem; text-align: center; margin-bottom: 1rem;'>{feature['icon']}</div>
+                        <h3 style='color: #0A1F3D; text-align: center; margin-bottom: 1rem;'>{feature['title']}</h3>
+                        <p style='color: #555; text-align: center;'>{feature['description']}</p>
+                    </div>
+                """, unsafe_allow_html=True)
         
-        with col3:
-            st.markdown("""
-            **💰 Pricing**
-            - £25/month
-            - Cancel anytime
-            - Secure payments
-            - Instant access
-            """)
+        st.markdown("</div></div></div>", unsafe_allow_html=True)
+        
+        # Pricing section
+        st.markdown("---")
+        st.markdown("""
+            <div style='background: linear-gradient(135deg, #F0F2F5 0%, #F8F9FA 100%); 
+                        padding: 3rem 0; margin: 0 -5rem; text-align: center;'>
+                <div style='max-width: 500px; margin: 0 auto;'>
+                    <h2 style='color: #0A1F3D; font-size: 2.5rem; margin-bottom: 2rem;'>Simple Pricing</h2>
+                    <div style='background: white; border-radius: 8px; padding: 3rem; 
+                                box-shadow: 0 15px 40px rgba(0,0,0,0.05); border: 1px solid #E1E5EA;'>
+                        <div style='background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%); 
+                                    color: white; padding: 0.5rem 1rem; border-radius: 20px; 
+                                    display: inline-block; margin-bottom: 1rem; font-weight: 600;'>
+                            MONTHLY SUBSCRIPTION
+                        </div>
+                        <div style='font-size: 3rem; color: #0A1F3D; font-weight: 700; margin-bottom: 1rem;'>
+                            £25<span style='font-size: 1.2rem; font-weight: 400;'>/month</span>
+                        </div>
+                        <ul style='list-style: none; padding: 0; text-align: left; margin: 2rem 0;'>
+                            <li style='padding: 0.5rem 0; color: #555;'>✅ Unlimited CV analyses</li>
+                            <li style='padding: 0.5rem 0; color: #555;'>✅ Keyword optimisation suggestions</li>
+                            <li style='padding: 0.5rem 0; color: #555;'>✅ ATS compatibility check</li>
+                            <li style='padding: 0.5rem 0; color: #555;'>✅ Match score analytics</li>
+                            <li style='padding: 0.5rem 0; color: #555;'>✅ Industry-specific insights</li>
+                            <li style='padding: 0.5rem 0; color: #555;'>✅ CV version management</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
 
 # Error handling wrapper
 try:
@@ -296,18 +287,3 @@ except Exception as e:
         st.code(traceback.format_exc())
     else:
         st.error("Please refresh the page or contact support if the problem persists.")
-        
-    # Show basic diagnostic info
-    with st.expander("Diagnostic Information"):
-        st.write("Python version:", sys.version)
-        st.write("Streamlit version:", st.__version__)
-        
-        # Check module availability
-        modules = ['psycopg2', 'bcrypt', 'anthropic', 'stripe', 'PyPDF2', 'docx']
-        st.write("\n**Module Status:**")
-        for module in modules:
-            try:
-                __import__(module)
-                st.write(f"✅ {module}")
-            except ImportError:
-                st.write(f"❌ {module}")
