@@ -40,12 +40,16 @@ class AuthManager:
         if not self.verify_password(password, user['password_hash']):
             return None, "Invalid email or password"
         
-        # Update last login
-        self.db.execute(
-            "UPDATE users SET last_login = %s WHERE user_id = %s",
-            (datetime.now(), user['user_id']),
-            fetch=False
-        )
+        # Try to update last login, but don't fail if column doesn't exist
+        try:
+            self.db.execute(
+                "UPDATE users SET last_login = %s WHERE user_id = %s",
+                (datetime.now(), user['user_id']),
+                fetch=False
+            )
+        except Exception as e:
+            # Ignore if last_login column doesn't exist
+            print(f"Could not update last_login: {e}")
         
         return user, "Login successful"
     
