@@ -1,8 +1,113 @@
 import streamlit as st
 import time
+from core.payment import create_checkout_session
+
+def show_subscription_needed(db_manager):
+    """Show subscription page for users who need to subscribe."""
+    user_id = st.session_state.get('temp_user_id')
+    email = st.session_state.get('temp_email')
+    
+    if not user_id or not email:
+        del st.session_state['needs_subscription']
+        st.rerun()
+        return
+    
+    # Get user details
+    user = db_manager.get_user_by_id(user_id)
+    if not user:
+        del st.session_state['needs_subscription']
+        st.rerun()
+        return
+    
+    # Check if this is a new user or expired subscription
+    is_new_user = user.get('subscription_status') is None or user.get('subscription_status') == 'inactive'
+    
+    st.markdown(f"""
+        <div style='text-align: center; margin-bottom: 2rem;'>
+            <h2 style='color: #0A1F3D;'>
+                {'Welcome to CareerVertex!' if is_new_user else 'Renew Your Subscription'}
+            </h2>
+            <p style='color: #666; font-size: 1.1rem;'>
+                {'Complete your subscription to start using CareerVertex' if is_new_user else 'Your subscription has expired. Renew to continue using CareerVertex.'}
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # Show pricing
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        st.markdown("""
+            <div style='background: white; border-radius: 8px; overflow: hidden;
+                        box-shadow: 0 15px 40px rgba(0,0,0,0.05); border: 1px solid #E1E5EA;'>
+                <div style='background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%); 
+                            color: white; padding: 2rem; text-align: center;'>
+                    <div style='font-size: 0.9rem; margin-bottom: 0.5rem;'>MONTHLY SUBSCRIPTION</div>
+                    <div style='font-size: 3rem; font-weight: 700;'>£25</div>
+                    <div style='font-size: 0.9rem; opacity: 0.9;'>per month • Cancel anytime</div>
+                </div>
+                <div style='padding: 2rem;'>
+                    <ul style='list-style: none; padding: 0;'>
+                        <li style='padding: 0.5rem 0; color: #555;'><span style='color: #10B981;'>✓</span> Unlimited CV analyses</li>
+                        <li style='padding: 0.5rem 0; color: #555;'><span style='color: #10B981;'>✓</span> AI-powered optimization</li>
+                        <li style='padding: 0.5rem 0; color: #555;'><span style='color: #10B981;'>✓</span> Cover letter generation</li>
+                        <li style='padding: 0.5rem 0; color: #555;'><span style='color: #10B981;'>✓</span> Interview preparation</li>
+                    </ul>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Subscribe button
+        st.markdown("<div style='margin-top: 2rem;'>", unsafe_allow_html=True)
+        
+        if st.button("🔒 Subscribe Now", type="primary", use_container_width=True):
+            with st.spinner("Creating secure payment session..."):
+                checkout_url = create_checkout_session(db_manager, user_id, email)
+                
+                if checkout_url:
+                    st.markdown(f"""
+                        <div style='text-align: center; padding: 2rem; background: #F0FDF4; 
+                                    border-radius: 8px; border: 1px solid #10B981; margin-top: 1rem;'>
+                            <h3 style='color: #10B981; margin-bottom: 1rem;'>✅ Redirecting to Stripe...</h3>
+                            <p style='color: #555;'>You'll be redirected to Stripe's secure payment page.</p>
+                            <a href="{checkout_url}" style="
+                                background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
+                                color: #0D1117;
+                                padding: 1rem 2rem;
+                                text-decoration: none;
+                                border-radius: 5px;
+                                font-weight: bold;
+                                display: inline-block;
+                            ">Continue to Payment →</a>
+                        </div>
+                        <script>
+                            setTimeout(function() {{
+                                window.location.href = "{checkout_url}";
+                            }}, 1500);
+                        </script>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.error("Failed to create payment session. Please try again.")
+        
+        # Back to login button
+        if st.button("← Back to Login", use_container_width=True):
+            del st.session_state['needs_subscription']
+            if 'temp_user_id' in st.session_state:
+                del st.session_state['temp_user_id']
+            if 'temp_email' in st.session_state:
+                del st.session_state['temp_email']
+            st.rerun()
+        
+        st.markdown("</div>", unsafe_allow_html=True)
+
 
 def show_login_page(db_manager, auth_manager):
     """Show login form for existing users."""
+    
+    # Check if we need to show subscription page
+    if st.session_state.get('needs_subscription'):
+        show_subscription_needed(db_manager)
+        return
     
     # Login form with index.html styling
     st.markdown("""
@@ -38,52 +143,21 @@ def show_login_page(db_manager, auth_manager):
                     user, message = auth_manager.login_user(email, password)
                     
                     if user:
-                        # Check subscription status
-                        if auth_manager.check_subscription(user['user_id']):
+                        # Check if user has ever had a subscription
+                        has_subscription = user.get('subscription_status') is not None and user.get('subscription_status') != 'inactive'
+                        
+                        if has_subscription and auth_manager.check_subscription(user['user_id']):
+                            # Active subscriber - log them in
                             st.session_state.user_id = user['user_id']
                             st.session_state.user_data = user
                             st.success("✅ Login successful!")
                             time.sleep(1)
                             st.rerun()
                         else:
-                            # User exists but subscription expired
-                            st.error("Your subscription has expired.")
-                            
-                            # Show resubscribe option
-                            st.markdown("""
-                                <div style='background: #FEF3C7; border: 1px solid #F59E0B; 
-                                            border-radius: 5px; padding: 1rem; margin-top: 1rem;'>
-                                    <p style='color: #92400E; margin: 0;'>
-                                        <strong>Subscription Required</strong><br/>
-                                        Your subscription has expired. Please resubscribe to continue using CareerVertex.
-                                    </p>
-                                </div>
-                            """, unsafe_allow_html=True)
-                            
-                            if st.button("Resubscribe Now", key="resubscribe"):
-                                # Create new checkout session for existing user
-                                from core.payment import create_checkout_session
-                                checkout_url = create_checkout_session(db_manager, user['user_id'], user['email'])
-                                
-                                if checkout_url:
-                                    st.markdown(f"""
-                                        <div style='text-align: center; padding: 2rem;'>
-                                            <a href="{checkout_url}" style="
-                                                background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
-                                                color: #0D1117;
-                                                padding: 1rem 2rem;
-                                                text-decoration: none;
-                                                border-radius: 5px;
-                                                font-weight: bold;
-                                                display: inline-block;
-                                            ">Continue to Payment →</a>
-                                        </div>
-                                        <script>
-                                            setTimeout(function() {{
-                                                window.location.href = "{checkout_url}";
-                                            }}, 1000);
-                                        </script>
-                                    """, unsafe_allow_html=True)
+                            # User needs subscription (either new or expired)
+                            st.session_state.temp_user_id = user['user_id']
+                            st.session_state.temp_email = user['email']
+                            st.session_state.needs_subscription = True
                     else:
                         st.error(message)
     
