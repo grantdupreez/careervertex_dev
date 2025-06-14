@@ -1,6 +1,7 @@
 import streamlit as st
 import sys
 import traceback
+import psycopg2  # Add this import
 
 # Page configuration
 st.set_page_config(
@@ -10,20 +11,57 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Debug mode
+# Debug mode - set to False in production
 DEBUG = True
+
+def check_and_create_tables(db_manager):
+    """Check existing tables and create missing ones."""
+    try:
+        # Get existing tables
+        existing_tables = db_manager.get_existing_tables()
+        required_tables = ['users', 'cvs', 'analyses', 'payments']
+        
+        print(f"Existing tables: {existing_tables}")
+        
+        # Check what's missing
+        missing_tables = [t for t in required_tables if t not in existing_tables]
+        
+        if not missing_tables:
+            print("All required tables exist")
+            return True
+        
+        print(f"Missing tables: {missing_tables}")
+        
+        # Try to create missing tables
+        tables_created, tables_checked = db_manager.create_tables_if_needed()
+        
+        # Verify all tables now exist
+        existing_after = db_manager.get_existing_tables()
+        still_missing = [t for t in required_tables if t not in existing_after]
+        
+        if not still_missing:
+            print("All tables created successfully")
+            return True
+        else:
+            print(f"Failed to create tables: {still_missing}")
+            return False
+            
+    except Exception as e:
+        print(f"Error checking/creating tables: {e}")
+        traceback.print_exc()
+        return False
 
 def main():
     """Main application entry point."""
     
-    # Load custom styles
+    # Load custom styles FIRST
     try:
         from static.styles import CUSTOM_CSS
         st.markdown(f"<style>{CUSTOM_CSS}</style>", unsafe_allow_html=True)
-    except:
+    except ImportError:
         pass
     
-    # Show title
+    # Show title with styling
     st.markdown("""
         <div style='text-align: center; padding: 2rem 0;'>
             <h1 style='font-size: 3rem; margin-bottom: 0.5rem;'>
@@ -33,158 +71,225 @@ def main():
         </div>
     """, unsafe_allow_html=True)
     
-    # Initialize core components
-    db_manager = None
-    auth_manager = None
-    
-    # Try to initialize database
+    # Step 1: Initialize database manager directly
     try:
         from core.database import DatabaseManager
         db_manager = DatabaseManager()
-        st.success("✅ Database connected")
+        
+        # Quick test to verify it works
+        test = db_manager.execute("SELECT 1")
+        if not test:
+            raise Exception("Database query failed")
+            
     except Exception as e:
-        st.error(f"⚠️ Database initialization failed: {str(e)}")
-        if DEBUG:
-            st.code(traceback.format_exc())
+        st.error("❌ Database connection failed")
+        st.error(f"Error: {str(e)}")
+        
+        # Check configuration
+        with st.expander("Configuration Status"):
+            required_secrets = ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"]
+            for secret in required_secrets:
+                if secret in st.secrets:
+                    if secret != "DB_PASSWORD":
+                        st.success(f"✅ {secret} = {st.secrets[secret]}")
+                    else:
+                        st.success(f"✅ {secret} is configured")
+                else:
+                    st.error(f"❌ {secret} is missing")
+        
+        # Try direct connection for debugging
+        if st.button("Test Direct Connection"):
+            try:
+                import psycopg2
+                conn = psycopg2.connect(
+                    dbname=st.secrets["DB_NAME"],
+                    user=st.secrets["DB_USER"],
+                    password=st.secrets["DB_PASSWORD"],
+                    host=st.secrets["DB_HOST"],
+                    port=st.secrets["DB_PORT"],
+                    sslmode='require'
+                )
+                conn.close()
+                st.success("Direct connection works! The issue is with DatabaseManager.")
+            except Exception as e:
+                st.error(f"Direct connection also failed: {e}")
+        return
     
-    # Try to initialize auth
-    if db_manager:
-        try:
-            from core.auth import AuthManager
-            auth_manager = AuthManager(db_manager)
-            st.success("✅ Authentication initialized")
-        except Exception as e:
-            st.error(f"⚠️ Authentication initialization failed: {str(e)}")
-            if DEBUG:
-                st.code(traceback.format_exc())
+    # Step 2: Check and create tables if needed
+    try:
+        if 'db_ready' not in st.session_state:
+            with st.spinner("Checking database tables..."):
+                if check_and_create_tables(db_manager):
+                    st.session_state.db_ready = True
+                else:
+                    st.warning("Could not initialize all database tables, but continuing...")
+                    st.session_state.db_ready = True  # Continue anyway
+    except Exception as e:
+        st.error(f"Table initialization error: {e}")
+        st.session_state.db_ready = True  # Continue anyway
     
-    # Check if we can load pages
-    pages_loaded = False
+    # Step 3: Initialize auth manager
+    try:
+        from core.auth import AuthManager
+        auth_manager = AuthManager(db_manager)
+    except Exception as e:
+        st.error(f"Authentication initialization warning: {e}")
+        auth_manager = None
+    
+    # Step 4: Load pages and components
     try:
         from pages.registration import show_registration_page
         from pages.login import show_login_page
         from pages.dashboard import show_dashboard
-        pages_loaded = True
-        st.success("✅ Page modules loaded")
     except ImportError as e:
-        st.error(f"⚠️ Failed to import page modules: {e}")
-        if DEBUG:
-            st.code(traceback.format_exc())
+        st.error(f"Failed to import page modules: {e}")
+        st.info("Make sure all files are in the correct directories: core/, pages/, etc.")
+        return
     
-    st.markdown("---")
+    # Continue with the rest of the application...
     
-    # Main application logic
-    if not db_manager or not auth_manager or not pages_loaded:
-        st.warning("Running in limited mode due to initialization issues")
-        
-        # Show basic login/register forms
-        tab1, tab2 = st.tabs(["Login", "Register"])
-        
-        with tab1:
-            st.markdown("### Login")
-            email = st.text_input("Email", key="login_email")
-            password = st.text_input("Password", type="password", key="login_password")
-            if st.button("Login", disabled=True):
-                st.error("Login disabled - database not connected")
-        
-        with tab2:
-            st.markdown("### Register")
-            st.info("Registration is currently unavailable due to database connection issues")
+    # Step 5: Check for payment success callback
+    query_params = st.query_params
+    if "payment" in query_params:
+        if query_params["payment"] == "success" and "session_id" in query_params:
+            session_id = query_params["session_id"]
+            
+            # Process the payment
+            from core.payment import verify_payment_and_login
+            success, user_data = verify_payment_and_login(db_manager, auth_manager, session_id)
+            
+            if success and user_data:
+                st.session_state.user_id = user_data['user_id']
+                st.session_state.user_data = user_data
+                st.query_params.clear()
+                st.success("✅ Payment successful! Welcome to CareerVertex Pro!")
+                st.rerun()
+            else:
+                st.error("Failed to verify payment. Please contact support.")
+                st.query_params.clear()
+        elif query_params["payment"] == "cancelled":
+            st.warning("Payment was cancelled. You can try again when you're ready.")
+            st.query_params.clear()
     
+    # Step 6: Route based on authentication
+    if 'user_id' in st.session_state:
+        # User is logged in - show dashboard
+        show_dashboard(db_manager, auth_manager)
     else:
-        # Normal operation - everything is working
+        # User not logged in - show login/registration with proper styling
+        st.markdown("---")
         
-        # Check for payment callback
-        query_params = st.query_params
-        if "payment" in query_params:
-            if query_params["payment"] == "success" and "session_id" in query_params:
-                try:
-                    from core.payment import verify_payment_and_login
-                    success, user_data = verify_payment_and_login(db_manager, auth_manager, query_params["session_id"])
-                    
-                    if success and user_data:
-                        st.session_state.user_id = user_data['user_id']
-                        st.session_state.user_data = user_data
-                        st.query_params.clear()
-                        st.success("✅ Payment successful! Welcome to CareerVertex Pro!")
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Payment verification failed: {e}")
-                    st.query_params.clear()
+        # Create centered layout with styled background
+        st.markdown("""
+            <div style='background: linear-gradient(135deg, #F8F9FA 0%, #E1E5EA 100%); 
+                        padding: 3rem 0; margin: -1rem -5rem 2rem -5rem;'>
+                <div style='max-width: 800px; margin: 0 auto; text-align: center;'>
+                    <h2 style='color: #0A1F3D; font-size: 2.5rem; margin-bottom: 1rem;'>
+                        Perfect CV-Job <span style='background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
+                        -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>Match Every Time</span>
+                    </h2>
+                    <p style='font-size: 1.1em; color: #555; max-width: 600px; margin: 0 auto;'>
+                        CareerVertex's AI-powered CV matching tool analyses your CV against job descriptions 
+                        to ensure you position yourself as the perfect candidate.
+                    </p>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
         
-        # Route based on authentication
-        if 'user_id' in st.session_state:
-            # User is logged in - show dashboard
-            show_dashboard(db_manager, auth_manager)
-        else:
-            # Show login/registration
-            st.markdown("""
-                <div style='background: linear-gradient(135deg, #F8F9FA 0%, #E1E5EA 100%); 
-                            padding: 3rem 0; margin: -1rem -5rem 2rem -5rem;'>
-                    <div style='max-width: 800px; margin: 0 auto; text-align: center;'>
-                        <h2 style='color: #0A1F3D; font-size: 2.5rem; margin-bottom: 1rem;'>
-                            Perfect CV-Job <span style='background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
-                            -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>Match Every Time</span>
-                        </h2>
-                        <p style='font-size: 1.1em; color: #555; max-width: 600px; margin: 0 auto;'>
-                            CareerVertex's AI-powered CV matching tool analyses your CV against job descriptions 
-                            to ensure you position yourself as the perfect candidate.
-                        </p>
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            # Login/Register tabs with custom styling
+            tab1, tab2 = st.tabs(["🔑 Login", "📝 Register"])
+            
+            with tab1:
+                show_login_page(db_manager, auth_manager)
+            
+            with tab2:
+                show_registration_page(db_manager, auth_manager)
+        
+        # Features section with index.html styling
+        st.markdown("---")
+        st.markdown("""
+            <div style='background-color: white; padding: 3rem 0; margin: 0 -5rem;'>
+                <div style='max-width: 1200px; margin: 0 auto; padding: 0 2rem;'>
+                    <h2 style='text-align: center; color: #0A1F3D; font-size: 2.5rem; margin-bottom: 3rem;'>
+                        Core Features
+                    </h2>
+                    <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem;'>
+        """, unsafe_allow_html=True)
+        
+        features = [
+            {
+                "icon": "🎯",
+                "title": "AI Keyword Analysis",
+                "description": "Our proprietary algorithm identifies critical keywords from job descriptions that match your experience."
+            },
+            {
+                "icon": "📊",
+                "title": "Match Score Analytics",
+                "description": "Receive a detailed match score showing how well your CV aligns with specific job requirements."
+            },
+            {
+                "icon": "💼",
+                "title": "Industry Insights",
+                "description": "Leverage industry-specific data to understand what skills are most valued in your target roles."
+            }
+        ]
+        
+        cols = st.columns(3)
+        for idx, feature in enumerate(features):
+            with cols[idx]:
+                st.markdown(f"""
+                    <div style='background: #F8F9FA; border-radius: 5px; padding: 2rem; 
+                                box-shadow: 0 10px 30px rgba(0,0,0,0.03); border: 1px solid #E1E5EA;
+                                transition: all 0.3s ease; height: 100%;'>
+                        <div style='font-size: 3rem; text-align: center; margin-bottom: 1rem;'>{feature['icon']}</div>
+                        <h3 style='color: #0A1F3D; text-align: center; margin-bottom: 1rem;'>{feature['title']}</h3>
+                        <p style='color: #555; text-align: center;'>{feature['description']}</p>
+                    </div>
+                """, unsafe_allow_html=True)
+        
+        st.markdown("</div></div></div>", unsafe_allow_html=True)
+        
+        # Pricing section
+        st.markdown("---")
+        st.markdown("""
+            <div style='background: linear-gradient(135deg, #F0F2F5 0%, #F8F9FA 100%); 
+                        padding: 3rem 0; margin: 0 -5rem; text-align: center;'>
+                <div style='max-width: 500px; margin: 0 auto;'>
+                    <h2 style='color: #0A1F3D; font-size: 2.5rem; margin-bottom: 2rem;'>Simple Pricing</h2>
+                    <div style='background: white; border-radius: 8px; padding: 3rem; 
+                                box-shadow: 0 15px 40px rgba(0,0,0,0.05); border: 1px solid #E1E5EA;'>
+                        <div style='background: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%); 
+                                    color: white; padding: 0.5rem 1rem; border-radius: 20px; 
+                                    display: inline-block; margin-bottom: 1rem; font-weight: 600;'>
+                            MONTHLY SUBSCRIPTION
+                        </div>
+                        <div style='font-size: 3rem; color: #0A1F3D; font-weight: 700; margin-bottom: 1rem;'>
+                            £25<span style='font-size: 1.2rem; font-weight: 400;'>/month</span>
+                        </div>
+                        <ul style='list-style: none; padding: 0; text-align: left; margin: 2rem 0;'>
+                            <li style='padding: 0.5rem 0; color: #555;'>✅ Unlimited CV analyses</li>
+                            <li style='padding: 0.5rem 0; color: #555;'>✅ Keyword optimisation suggestions</li>
+                            <li style='padding: 0.5rem 0; color: #555;'>✅ ATS compatibility check</li>
+                            <li style='padding: 0.5rem 0; color: #555;'>✅ Match score analytics</li>
+                            <li style='padding: 0.5rem 0; color: #555;'>✅ Industry-specific insights</li>
+                            <li style='padding: 0.5rem 0; color: #555;'>✅ CV version management</li>
+                        </ul>
                     </div>
                 </div>
-            """, unsafe_allow_html=True)
-            
-            col1, col2, col3 = st.columns([1, 2, 1])
-            
-            with col2:
-                tab1, tab2 = st.tabs(["🔑 Login", "📝 Register"])
-                
-                with tab1:
-                    show_login_page(db_manager, auth_manager)
-                
-                with tab2:
-                    show_registration_page(db_manager, auth_manager)
-            
-            # Features section
-            st.markdown("---")
-            
-            cols = st.columns(3)
-            features = [
-                {
-                    "icon": "🎯",
-                    "title": "AI Keyword Analysis",
-                    "description": "Our algorithm identifies critical keywords from job descriptions."
-                },
-                {
-                    "icon": "📊",
-                    "title": "Match Score Analytics",
-                    "description": "Get detailed match scores with improvement recommendations."
-                },
-                {
-                    "icon": "💼",
-                    "title": "Industry Insights",
-                    "description": "Leverage industry data to understand valued skills."
-                }
-            ]
-            
-            for idx, feature in enumerate(features):
-                with cols[idx]:
-                    st.markdown(f"""
-                        <div style='text-align: center; padding: 2rem; background: #F8F9FA; 
-                                    border-radius: 8px; height: 100%;'>
-                            <div style='font-size: 3rem; margin-bottom: 1rem;'>{feature['icon']}</div>
-                            <h3 style='color: #0A1F3D; margin-bottom: 1rem;'>{feature['title']}</h3>
-                            <p style='color: #666;'>{feature['description']}</p>
-                        </div>
-                    """, unsafe_allow_html=True)
+            </div>
+        """, unsafe_allow_html=True)
 
-# Run the app
-if __name__ == "__main__":
-    try:
+# Error handling wrapper
+try:
+    if __name__ == "__main__":
         main()
-    except Exception as e:
-        st.error("❌ An unexpected error occurred")
-        if DEBUG:
-            st.exception(e)
-        else:
-            st.error("Please refresh the page or contact support if the problem persists.")
+except Exception as e:
+    st.error("❌ An unexpected error occurred")
+    if DEBUG:
+        st.exception(e)
+        st.code(traceback.format_exc())
+    else:
+        st.error("Please refresh the page or contact support if the problem persists.")
