@@ -1,12 +1,15 @@
 import streamlit as st
 import psycopg2
 from psycopg2.extras import DictCursor
+from datetime import datetime, timedelta
 
 st.title("Database Migration Tool")
 
-def get_connection():
-    """Get database connection."""
-    return psycopg2.connect(
+# Test connection first
+st.header("Connection Test")
+try:
+    # Direct connection test
+    conn = psycopg2.connect(
         dbname=st.secrets["DB_NAME"],
         user=st.secrets["DB_USER"],
         password=st.secrets["DB_PASSWORD"],
@@ -14,11 +17,23 @@ def get_connection():
         port=st.secrets["DB_PORT"],
         sslmode='require'
     )
+    st.success("✅ Database connected successfully!")
+    conn.close()
+except Exception as e:
+    st.error(f"❌ Connection failed: {e}")
+    st.stop()
 
 # Check current schema
 st.header("1. Current Users Table Schema")
 try:
-    conn = get_connection()
+    conn = psycopg2.connect(
+        dbname=st.secrets["DB_NAME"],
+        user=st.secrets["DB_USER"],
+        password=st.secrets["DB_PASSWORD"],
+        host=st.secrets["DB_HOST"],
+        port=st.secrets["DB_PORT"],
+        sslmode='require'
+    )
     cur = conn.cursor(cursor_factory=DictCursor)
     
     # Get column information
@@ -52,7 +67,14 @@ missing_columns = {
 
 if st.button("Check and Add Missing Columns"):
     try:
-        conn = get_connection()
+        conn = psycopg2.connect(
+            dbname=st.secrets["DB_NAME"],
+            user=st.secrets["DB_USER"],
+            password=st.secrets["DB_PASSWORD"],
+            host=st.secrets["DB_HOST"],
+            port=st.secrets["DB_PORT"],
+            sslmode='require'
+        )
         cur = conn.cursor()
         
         # Check which columns exist
@@ -95,7 +117,14 @@ user_email = st.text_input("Enter user email to check/fix")
 
 if user_email and st.button("Check User"):
     try:
-        conn = get_connection()
+        conn = psycopg2.connect(
+            dbname=st.secrets["DB_NAME"],
+            user=st.secrets["DB_USER"],
+            password=st.secrets["DB_PASSWORD"],
+            host=st.secrets["DB_HOST"],
+            port=st.secrets["DB_PORT"],
+            sslmode='require'
+        )
         cur = conn.cursor(cursor_factory=DictCursor)
         
         # Get user info
