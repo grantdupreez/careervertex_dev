@@ -26,6 +26,9 @@ def test_database_connection():
         return False, None
     except Exception as e:
         print(f"Database connection test failed: {e}")
+        # Show more detailed error in console
+        import traceback
+        traceback.print_exc()
         return False, None
 
 def check_and_create_tables(db_manager):
