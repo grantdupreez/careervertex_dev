@@ -4,6 +4,7 @@ from psycopg2.extras import DictCursor
 from datetime import datetime, timedelta
 import pandas as pd
 import bcrypt
+import time
 
 st.set_page_config(
     page_title="CareerVertex Admin",
@@ -18,6 +19,30 @@ def get_admin_emails():
     return [email.strip() for email in emails.split(",")]
 
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")  # Change this!
+
+def get_db_connection(max_retries=3):
+    """Get database connection with retry logic."""
+    for attempt in range(max_retries):
+        try:
+            conn = psycopg2.connect(
+                dbname=st.secrets["DB_NAME"],
+                user=st.secrets["DB_USER"],
+                password=st.secrets["DB_PASSWORD"],
+                host=st.secrets["DB_HOST"],
+                port=st.secrets["DB_PORT"],
+                sslmode='require',
+                connect_timeout=10,  # 10 second timeout
+                keepalives=1,
+                keepalives_idle=30,
+                keepalives_interval=10,
+                keepalives_count=5
+            )
+            return conn
+        except psycopg2.OperationalError as e:
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # Exponential backoff
+            else:
+                raise e
 
 def check_admin_auth():
     """Simple admin authentication."""
@@ -47,21 +72,6 @@ def main():
     check_admin_auth()
     
     st.title("🔧 CareerVertex Admin Panel")
-    
-    # Test database connection first
-    try:
-        test_conn = psycopg2.connect(
-            dbname=st.secrets["DB_NAME"],
-            user=st.secrets["DB_USER"],
-            password=st.secrets["DB_PASSWORD"],
-            host=st.secrets["DB_HOST"],
-            port=st.secrets["DB_PORT"],
-            sslmode='require'
-        )
-        test_conn.close()
-    except Exception as e:
-        st.error(f"❌ Database connection failed: {e}")
-        st.stop()
     
     # Sidebar navigation
     st.sidebar.title("Navigation")
@@ -98,15 +108,7 @@ def show_dashboard():
     st.header("📊 Admin Dashboard")
     
     try:
-        # Direct connection
-        conn = psycopg2.connect(
-            dbname=st.secrets["DB_NAME"],
-            user=st.secrets["DB_USER"],
-            password=st.secrets["DB_PASSWORD"],
-            host=st.secrets["DB_HOST"],
-            port=st.secrets["DB_PORT"],
-            sslmode='require'
-        )
+        conn = get_db_connection()
         cur = conn.cursor(cursor_factory=DictCursor)
         
         # Key metrics
@@ -159,6 +161,9 @@ def show_dashboard():
         cur.close()
         conn.close()
         
+    except psycopg2.OperationalError as e:
+        st.error(f"Database connection error: {str(e)}")
+        st.info("The database connection timed out. This might be due to network issues or database availability.")
     except Exception as e:
         st.error(f"Error loading dashboard: {e}")
 
@@ -182,15 +187,7 @@ def show_user_management():
     
     # User list
     try:
-        # Direct connection
-        conn = psycopg2.connect(
-            dbname=st.secrets["DB_NAME"],
-            user=st.secrets["DB_USER"],
-            password=st.secrets["DB_PASSWORD"],
-            host=st.secrets["DB_HOST"],
-            port=st.secrets["DB_PORT"],
-            sslmode='require'
-        )
+        conn = get_db_connection()
         cur = conn.cursor(cursor_factory=DictCursor)
         
         # Build query
@@ -242,78 +239,66 @@ def show_user_management():
                     
                     with col2:
                         if st.button("🔑 Reset Password", key=f"reset_{user['user_id']}"):
-                            new_password = "password123"  # Generate random password in production
-                            password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                            
-                            # New connection for update
-                            conn2 = psycopg2.connect(
-                                dbname=st.secrets["DB_NAME"],
-                                user=st.secrets["DB_USER"],
-                                password=st.secrets["DB_PASSWORD"],
-                                host=st.secrets["DB_HOST"],
-                                port=st.secrets["DB_PORT"],
-                                sslmode='require'
-                            )
-                            cur2 = conn2.cursor()
-                            cur2.execute("UPDATE users SET password_hash = %s WHERE user_id = %s", 
-                                       (password_hash, user['user_id']))
-                            conn2.commit()
-                            cur2.close()
-                            conn2.close()
-                            
-                            st.success(f"Password reset to: {new_password}")
-                    
-                    with col3:
-                        if st.button("💳 Activate Sub", key=f"activate_{user['user_id']}"):
-                            # New connection for update
-                            conn2 = psycopg2.connect(
-                                dbname=st.secrets["DB_NAME"],
-                                user=st.secrets["DB_USER"],
-                                password=st.secrets["DB_PASSWORD"],
-                                host=st.secrets["DB_HOST"],
-                                port=st.secrets["DB_PORT"],
-                                sslmode='require'
-                            )
-                            cur2 = conn2.cursor()
-                            cur2.execute("""
-                                UPDATE users 
-                                SET subscription_status = 'active',
-                                    subscription_end = %s
-                                WHERE user_id = %s
-                            """, (datetime.now() + timedelta(days=30), user['user_id']))
-                            conn2.commit()
-                            cur2.close()
-                            conn2.close()
-                            
-                            st.success("Subscription activated for 30 days")
-                            st.rerun()
-                    
-                    with col4:
-                        if st.button("🗑️ Delete", key=f"delete_{user['user_id']}"):
-                            if st.checkbox(f"Confirm delete {user['email']}", key=f"confirm_{user['user_id']}"):
-                                # New connection for delete
-                                conn2 = psycopg2.connect(
-                                    dbname=st.secrets["DB_NAME"],
-                                    user=st.secrets["DB_USER"],
-                                    password=st.secrets["DB_PASSWORD"],
-                                    host=st.secrets["DB_HOST"],
-                                    port=st.secrets["DB_PORT"],
-                                    sslmode='require'
-                                )
+                            try:
+                                new_password = "password123"  # Generate random password in production
+                                password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                                
+                                conn2 = get_db_connection()
                                 cur2 = conn2.cursor()
-                                cur2.execute("DELETE FROM users WHERE user_id = %s", (user['user_id'],))
+                                cur2.execute("UPDATE users SET password_hash = %s WHERE user_id = %s", 
+                                           (password_hash, user['user_id']))
                                 conn2.commit()
                                 cur2.close()
                                 conn2.close()
                                 
-                                st.success("User deleted")
+                                st.success(f"Password reset to: {new_password}")
+                            except Exception as e:
+                                st.error(f"Failed to reset password: {e}")
+                    
+                    with col3:
+                        if st.button("💳 Activate Sub", key=f"activate_{user['user_id']}"):
+                            try:
+                                conn2 = get_db_connection()
+                                cur2 = conn2.cursor()
+                                cur2.execute("""
+                                    UPDATE users 
+                                    SET subscription_status = 'active',
+                                        subscription_end = %s
+                                    WHERE user_id = %s
+                                """, (datetime.now() + timedelta(days=30), user['user_id']))
+                                conn2.commit()
+                                cur2.close()
+                                conn2.close()
+                                
+                                st.success("Subscription activated for 30 days")
                                 st.rerun()
+                            except Exception as e:
+                                st.error(f"Failed to activate subscription: {e}")
+                    
+                    with col4:
+                        if st.button("🗑️ Delete", key=f"delete_{user['user_id']}"):
+                            if st.checkbox(f"Confirm delete {user['email']}", key=f"confirm_{user['user_id']}"):
+                                try:
+                                    conn2 = get_db_connection()
+                                    cur2 = conn2.cursor()
+                                    cur2.execute("DELETE FROM users WHERE user_id = %s", (user['user_id'],))
+                                    conn2.commit()
+                                    cur2.close()
+                                    conn2.close()
+                                    
+                                    st.success("User deleted")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Failed to delete user: {e}")
         else:
             st.info("No users found")
         
         cur.close()
         conn.close()
         
+    except psycopg2.OperationalError as e:
+        st.error(f"Database connection error: {str(e)}")
+        st.info("The database connection timed out. Please try again.")
     except Exception as e:
         st.error(f"Error: {e}")
 
@@ -322,15 +307,7 @@ def show_subscription_management():
     st.header("💳 Subscription Management")
     
     try:
-        # Direct connection
-        conn = psycopg2.connect(
-            dbname=st.secrets["DB_NAME"],
-            user=st.secrets["DB_USER"],
-            password=st.secrets["DB_PASSWORD"],
-            host=st.secrets["DB_HOST"],
-            port=st.secrets["DB_PORT"],
-            sslmode='require'
-        )
+        conn = get_db_connection()
         cur = conn.cursor(cursor_factory=DictCursor)
         
         # Subscription stats
@@ -438,6 +415,9 @@ def show_subscription_management():
         cur.close()
         conn.close()
         
+    except psycopg2.OperationalError as e:
+        st.error(f"Database connection error: {str(e)}")
+        st.info("The database connection timed out. Please try again.")
     except Exception as e:
         st.error(f"Error: {e}")
 
@@ -446,15 +426,7 @@ def show_analytics():
     st.header("📈 Analytics")
     
     try:
-        # Direct connection
-        conn = psycopg2.connect(
-            dbname=st.secrets["DB_NAME"],
-            user=st.secrets["DB_USER"],
-            password=st.secrets["DB_PASSWORD"],
-            host=st.secrets["DB_HOST"],
-            port=st.secrets["DB_PORT"],
-            sslmode='require'
-        )
+        conn = get_db_connection()
         cur = conn.cursor(cursor_factory=DictCursor)
         
         # User growth chart
@@ -535,6 +507,9 @@ def show_analytics():
         cur.close()
         conn.close()
         
+    except psycopg2.OperationalError as e:
+        st.error(f"Database connection error: {str(e)}")
+        st.info("The database connection timed out. Please try again.")
     except Exception as e:
         st.error(f"Error: {e}")
 
@@ -550,14 +525,7 @@ def show_database_tools():
     with col1:
         if st.button("📥 Export Users CSV"):
             try:
-                conn = psycopg2.connect(
-                    dbname=st.secrets["DB_NAME"],
-                    user=st.secrets["DB_USER"],
-                    password=st.secrets["DB_PASSWORD"],
-                    host=st.secrets["DB_HOST"],
-                    port=st.secrets["DB_PORT"],
-                    sslmode='require'
-                )
+                conn = get_db_connection()
                 query = """
                     SELECT email, full_name, subscription_status, 
                            subscription_end, created_at, last_login
@@ -575,20 +543,15 @@ def show_database_tools():
                 )
                 
                 conn.close()
+            except psycopg2.OperationalError as e:
+                st.error(f"Database connection error: {str(e)}")
             except Exception as e:
                 st.error(f"Export error: {e}")
     
     with col2:
         if st.button("📥 Export Payments CSV"):
             try:
-                conn = psycopg2.connect(
-                    dbname=st.secrets["DB_NAME"],
-                    user=st.secrets["DB_USER"],
-                    password=st.secrets["DB_PASSWORD"],
-                    host=st.secrets["DB_HOST"],
-                    port=st.secrets["DB_PORT"],
-                    sslmode='require'
-                )
+                conn = get_db_connection()
                 query = """
                     SELECT p.created_at, u.email, p.amount, p.status, p.stripe_session_id
                     FROM payments p
@@ -606,6 +569,8 @@ def show_database_tools():
                 )
                 
                 conn.close()
+            except psycopg2.OperationalError as e:
+                st.error(f"Database connection error: {str(e)}")
             except Exception as e:
                 st.error(f"Export error: {e}")
     
@@ -617,14 +582,7 @@ def show_database_tools():
     with col1:
         if st.button("🧹 Clean Expired Tokens"):
             try:
-                conn = psycopg2.connect(
-                    dbname=st.secrets["DB_NAME"],
-                    user=st.secrets["DB_USER"],
-                    password=st.secrets["DB_PASSWORD"],
-                    host=st.secrets["DB_HOST"],
-                    port=st.secrets["DB_PORT"],
-                    sslmode='require'
-                )
+                conn = get_db_connection()
                 cur = conn.cursor()
                 
                 cur.execute("""
@@ -639,20 +597,15 @@ def show_database_tools():
                 conn.close()
                 
                 st.success(f"Cleaned {cleaned} expired tokens")
+            except psycopg2.OperationalError as e:
+                st.error(f"Database connection error: {str(e)}")
             except Exception as e:
                 st.error(f"Cleanup error: {e}")
     
     with col2:
         if st.button("🔄 Update Expired Subscriptions"):
             try:
-                conn = psycopg2.connect(
-                    dbname=st.secrets["DB_NAME"],
-                    user=st.secrets["DB_USER"],
-                    password=st.secrets["DB_PASSWORD"],
-                    host=st.secrets["DB_HOST"],
-                    port=st.secrets["DB_PORT"],
-                    sslmode='require'
-                )
+                conn = get_db_connection()
                 cur = conn.cursor()
                 
                 cur.execute("""
@@ -668,6 +621,8 @@ def show_database_tools():
                 conn.close()
                 
                 st.success(f"Updated {updated} expired subscriptions")
+            except psycopg2.OperationalError as e:
+                st.error(f"Database connection error: {str(e)}")
             except Exception as e:
                 st.error(f"Update error: {e}")
     
@@ -680,14 +635,7 @@ def show_database_tools():
     if st.button("🚀 Execute Query"):
         if sql_query:
             try:
-                conn = psycopg2.connect(
-                    dbname=st.secrets["DB_NAME"],
-                    user=st.secrets["DB_USER"],
-                    password=st.secrets["DB_PASSWORD"],
-                    host=st.secrets["DB_HOST"],
-                    port=st.secrets["DB_PORT"],
-                    sslmode='require'
-                )
+                conn = get_db_connection()
                 
                 # Only allow SELECT queries for safety
                 if sql_query.strip().upper().startswith("SELECT"):
@@ -697,6 +645,9 @@ def show_database_tools():
                     st.error("Only SELECT queries are allowed in this interface")
                 
                 conn.close()
+            except psycopg2.OperationalError as e:
+                st.error(f"Database connection error: {str(e)}")
+                st.info("The database connection timed out. Please check your connection and try again.")
             except Exception as e:
                 st.error(f"Query error: {e}")
 
