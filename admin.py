@@ -1,11 +1,9 @@
 import streamlit as st
 import psycopg2
-from psycopg2 import pool
 from psycopg2.extras import DictCursor, Json
 from datetime import datetime, timedelta
 import pandas as pd
 import bcrypt
-from contextlib import contextmanager
 import time
 import stripe
 import uuid
@@ -17,13 +15,11 @@ import re
 
 st.set_page_config(page_title="CareerVertex Admin", page_icon="🔧", layout="wide")
 
-# Initialize connection pool
-@st.cache_resource
-def init_connection_pool():
-    """Initialize a connection pool for the database"""
+# Direct database connection function (matching main app)
+def get_db_connection():
+    """Get a direct database connection"""
     try:
-        return psycopg2.pool.SimpleConnectionPool(
-            1, 20,  # min and max connections
+        conn = psycopg2.connect(
             dbname=st.secrets["DB_NAME"],
             user=st.secrets["DB_USER"],
             password=st.secrets["DB_PASSWORD"],
@@ -31,57 +27,53 @@ def init_connection_pool():
             port=st.secrets["DB_PORT"],
             sslmode='require'
         )
+        return conn
     except Exception as e:
-        st.error(f"Failed to create connection pool: {e}")
+        st.error(f"Database connection failed: {str(e)}")
         return None
 
-# Context manager for database connections
-@contextmanager
-def get_db_connection():
-    """Get a database connection from the pool"""
-    pool = init_connection_pool()
-    if not pool:
-        raise Exception("Connection pool not initialized")
-    
-    conn = None
-    try:
-        conn = pool.getconn()
-        yield conn
-        conn.commit()
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        raise e
-    finally:
-        if conn:
-            pool.putconn(conn)
-
-# Helper function to execute queries
+# Helper function to execute queries (matching database.py pattern)
 def execute_query(query, params=None, fetch=False):
     """Execute a database query with proper error handling"""
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor(cursor_factory=DictCursor) as cur:
-                cur.execute(query, params)
-                if fetch:
-                    return cur.fetchall()
-                return cur.rowcount
-    except Exception as e:
-        st.error(f"Database error: {e}")
+    conn = get_db_connection()
+    if not conn:
         return None
+    
+    try:
+        with conn.cursor(cursor_factory=DictCursor) as cur:
+            cur.execute(query, params)
+            
+            if fetch:
+                result = cur.fetchall()
+            else:
+                result = cur.rowcount
+            
+            conn.commit()
+            return result
+    except Exception as e:
+        conn.rollback()
+        st.error(f"Query error: {e}")
+        return None
+    finally:
+        conn.close()
 
 # Helper function to get single value
 def get_single_value(query, params=None):
     """Get a single value from the database"""
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-                result = cur.fetchone()
-                return result[0] if result else None
-    except Exception as e:
-        st.error(f"Database error: {e}")
+    conn = get_db_connection()
+    if not conn:
         return None
+    
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            result = cur.fetchone()
+            return result[0] if result else None
+    except Exception as e:
+        st.error(f"Query error: {e}")
+        return None
+    finally:
+        conn.close()
 
 # Admin authentication
 ADMIN_EMAILS = st.secrets.get("ADMIN_EMAILS", "admin@careervertex.com").split(",")
@@ -133,16 +125,21 @@ else:
             st.subheader("🔌 System Status")
             
             # Test database connection
-            try:
-                with get_db_connection() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("SELECT version()")
-                        version = cur.fetchone()
-                        st.success("✅ Database: Connected")
-                        with st.expander("PostgreSQL Version"):
-                            st.code(version[0])
-            except Exception as e:
-                st.error(f"❌ Database: {str(e)}")
+            conn = get_db_connection()
+            if conn:
+                try:
+                    cur = conn.cursor()
+                    cur.execute("SELECT version()")
+                    version = cur.fetchone()
+                    st.success("✅ Database: Connected")
+                    with st.expander("PostgreSQL Version"):
+                        st.code(version[0])
+                    cur.close()
+                    conn.close()
+                except Exception as e:
+                    st.error(f"❌ Database query failed: {e}")
+            else:
+                st.error("❌ Database: Connection failed")
         
         with col2:
             st.subheader("🔑 API Status")
@@ -281,7 +278,7 @@ else:
                         with col1:
                             st.write(f"**User ID:** `{user['user_id']}`")
                             st.write(f"**Created:** {user['created_at'].strftime('%Y-%m-%d %H:%M')}")
-                            if user['last_login']:
+                            if user.get('last_login'):
                                 st.write(f"**Last Login:** {user['last_login'].strftime('%Y-%m-%d %H:%M')}")
                             else:
                                 st.write("**Last Login:** Never")
@@ -476,8 +473,9 @@ else:
         
         with col2:
             if st.button("📊 Export Active Subscribers"):
-                try:
-                    with get_db_connection() as conn:
+                conn = get_db_connection()
+                if conn:
+                    try:
                         query = """
                             SELECT email, full_name, subscription_start, subscription_end,
                                    stripe_customer_id
@@ -486,6 +484,7 @@ else:
                             ORDER BY subscription_end DESC
                         """
                         df = pd.read_sql(query, conn)
+                        conn.close()
                         
                         if not df.empty:
                             csv = df.to_csv(index=False)
@@ -497,8 +496,10 @@ else:
                             )
                         else:
                             st.info("No active subscribers to export")
-                except Exception as e:
-                    st.error(f"Export failed: {e}")
+                    except Exception as e:
+                        st.error(f"Export failed: {e}")
+                        if conn:
+                            conn.close()
         
         # Subscription timeline
         st.subheader("📅 Subscription Timeline")
@@ -787,8 +788,10 @@ else:
                             start_time = time.time()
                             
                             if query.strip().upper().startswith("SELECT"):
-                                with get_db_connection() as conn:
+                                conn = get_db_connection()
+                                if conn:
                                     df = pd.read_sql(query, conn)
+                                    conn.close()
                                     elapsed = time.time() - start_time
                                     
                                     st.success(f"✅ Query executed in {elapsed:.2f} seconds")
@@ -906,17 +909,20 @@ else:
                             st.success(f"✅ Network: Can reach {host}:{port}")
                             
                             # Test database connection
-                            with get_db_connection() as conn:
-                                with conn.cursor() as cur:
-                                    cur.execute("SELECT current_database(), current_user, version()")
-                                    db_info = cur.fetchone()
-                                    
-                                    st.success("✅ Database: Connected successfully")
-                                    st.code(f"""
+                            conn = get_db_connection()
+                            if conn:
+                                cur = conn.cursor()
+                                cur.execute("SELECT current_database(), current_user, version()")
+                                db_info = cur.fetchone()
+                                cur.close()
+                                conn.close()
+                                
+                                st.success("✅ Database: Connected successfully")
+                                st.code(f"""
 Database: {db_info[0]}
 User: {db_info[1]}
 Version: {db_info[2].split(',')[0]}
-                                    """)
+                                """)
                         else:
                             st.error(f"❌ Network: Cannot reach {host}:{port}")
                             st.info("Check firewall rules and network configuration")
