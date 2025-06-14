@@ -1,472 +1,269 @@
 import streamlit as st
 import psycopg2
-from psycopg2.extras import DictCursor
 from datetime import datetime, timedelta
 import pandas as pd
 import bcrypt
 
-st.set_page_config(
-    page_title="CareerVertex Admin",
-    page_icon="🔧",
-    layout="wide"
-)
+st.set_page_config(page_title="CareerVertex Admin", page_icon="🔧", layout="wide")
 
 # Admin authentication
-def get_admin_emails():
-    """Get admin emails from secrets."""
-    emails = st.secrets.get("ADMIN_EMAILS", "admin@careervertex.com")
-    return [email.strip() for email in emails.split(",")]
-
+ADMIN_EMAILS = st.secrets.get("ADMIN_EMAILS", "admin@careervertex.com").split(",")
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")
 
-def check_admin_auth():
-    """Simple admin authentication."""
-    if 'admin_authenticated' not in st.session_state:
-        st.session_state.admin_authenticated = False
-    
-    if not st.session_state.admin_authenticated:
-        st.title("🔒 Admin Login")
-        
-        with st.form("admin_login"):
-            email = st.text_input("Admin Email")
-            password = st.text_input("Password", type="password")
-            
-            if st.form_submit_button("Login"):
-                admin_emails = get_admin_emails()
-                if email.lower() in [e.lower() for e in admin_emails] and password == ADMIN_PASSWORD:
-                    st.session_state.admin_authenticated = True
-                    st.success("✅ Admin access granted")
-                    st.rerun()
-                else:
-                    st.error("Invalid credentials")
-        
-        st.stop()
+if 'admin_authenticated' not in st.session_state:
+    st.session_state.admin_authenticated = False
 
-def get_connection():
-    """Get database connection - exactly like db_test.py"""
-    return psycopg2.connect(
-        dbname=st.secrets["DB_NAME"],
-        user=st.secrets["DB_USER"],
-        password=st.secrets["DB_PASSWORD"],
-        host=st.secrets["DB_HOST"],
-        port=st.secrets["DB_PORT"],
-        sslmode='require'
-    )
-
-def main():
-    """Main admin panel."""
-    check_admin_auth()
+if not st.session_state.admin_authenticated:
+    st.title("🔒 Admin Login")
     
+    with st.form("admin_login"):
+        email = st.text_input("Admin Email")
+        password = st.text_input("Password", type="password")
+        
+        if st.form_submit_button("Login"):
+            if email in ADMIN_EMAILS and password == ADMIN_PASSWORD:
+                st.session_state.admin_authenticated = True
+                st.rerun()
+            else:
+                st.error("Invalid credentials")
+else:
     st.title("🔧 CareerVertex Admin Panel")
     
-    # Sidebar navigation
-    st.sidebar.title("Navigation")
-    page = st.sidebar.radio("Go to", [
-        "📊 Dashboard",
-        "👥 User Management", 
-        "💳 Subscription Management",
-        "📈 Analytics",
-        "🔧 Database Tools",
-        "🚪 Logout"
-    ])
-    
-    if page == "🚪 Logout":
+    # Logout button
+    if st.button("🚪 Logout"):
         st.session_state.admin_authenticated = False
         st.rerun()
     
-    elif page == "📊 Dashboard":
-        show_dashboard()
+    # Navigation tabs
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard", "👥 Users", "💳 Subscriptions", "🔧 Tools"])
     
-    elif page == "👥 User Management":
-        show_user_management()
-    
-    elif page == "💳 Subscription Management":
-        show_subscription_management()
-    
-    elif page == "📈 Analytics":
-        show_analytics()
-    
-    elif page == "🔧 Database Tools":
-        show_database_tools()
-
-def show_dashboard():
-    """Show admin dashboard with key metrics."""
-    st.header("📊 Admin Dashboard")
-    
-    try:
-        conn = get_connection()
-        cur = conn.cursor(cursor_factory=DictCursor)
+    with tab1:
+        st.header("Dashboard")
         
-        # Key metrics
-        col1, col2, col3, col4 = st.columns(4)
-        
-        # Total users
-        cur.execute("SELECT COUNT(*) as count FROM users")
-        total_users = cur.fetchone()['count']
-        
-        with col1:
-            st.metric("Total Users", total_users)
-        
-        # Active subscriptions
-        cur.execute("SELECT COUNT(*) as count FROM users WHERE subscription_status = 'active' AND subscription_end > NOW()")
-        active_subs = cur.fetchone()['count']
-        
-        with col2:
-            st.metric("Active Subscriptions", active_subs)
-        
-        # Total revenue
-        cur.execute("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE status = 'completed'")
-        total_revenue = cur.fetchone()['total']
-        
-        with col3:
-            st.metric("Total Revenue", f"£{total_revenue:.2f}")
-        
-        # CVs uploaded
-        cur.execute("SELECT COUNT(*) as count FROM cvs")
-        total_cvs = cur.fetchone()['count']
-        
-        with col4:
-            st.metric("CVs Uploaded", total_cvs)
-        
-        # Recent users
-        st.subheader("Recent Registrations")
-        
-        cur.execute("""
-            SELECT email, full_name, created_at, subscription_status
-            FROM users
-            ORDER BY created_at DESC
-            LIMIT 10
-        """)
-        
-        recent_users = cur.fetchall()
-        
-        if recent_users:
-            df = pd.DataFrame(recent_users)
-            st.dataframe(df, use_container_width=True)
-        
-        cur.close()
-        conn.close()
-        
-    except Exception as e:
-        st.error(f"Database error: {e}")
-
-def show_user_management():
-    """User management interface."""
-    st.header("👥 User Management")
-    
-    # Search
-    search_email = st.text_input("Search by email (leave empty to show all)")
-    
-    if st.button("Search Users"):
-        try:
-            conn = get_connection()
-            cur = conn.cursor(cursor_factory=DictCursor)
-            
-            if search_email:
-                cur.execute(
-                    "SELECT * FROM users WHERE email ILIKE %s ORDER BY created_at DESC LIMIT 50",
-                    (f"%{search_email}%",)
-                )
-            else:
-                cur.execute("SELECT * FROM users ORDER BY created_at DESC LIMIT 50")
-            
-            users = cur.fetchall()
-            
-            if users:
-                st.write(f"Found {len(users)} users")
-                
-                for user in users:
-                    with st.expander(f"{user['email']} - {user['full_name'] or 'No name'}"):
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            st.write(f"**Email:** {user['email']}")
-                            st.write(f"**Name:** {user['full_name'] or 'Not set'}")
-                            st.write(f"**Created:** {user['created_at']}")
-                        
-                        with col2:
-                            st.write(f"**Status:** {user['subscription_status'] or 'Inactive'}")
-                            st.write(f"**Sub End:** {user.get('subscription_end', 'N/A')}")
-                        
-                        # Simple actions
-                        col1, col2, col3 = st.columns(3)
-                        
-                        with col1:
-                            if st.button("Reset Password", key=f"pwd_{user['user_id']}"):
-                                reset_user_password(user['user_id'], user['email'])
-                        
-                        with col2:
-                            if st.button("Activate 30 Days", key=f"act_{user['user_id']}"):
-                                activate_subscription(user['user_id'])
-                        
-                        with col3:
-                            if st.button("Deactivate", key=f"deact_{user['user_id']}"):
-                                deactivate_subscription(user['user_id'])
-            else:
-                st.info("No users found")
-            
-            cur.close()
-            conn.close()
-            
-        except Exception as e:
-            st.error(f"Database error: {e}")
-
-def reset_user_password(user_id, email):
-    """Reset user password."""
-    try:
-        new_password = "password123"
-        password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-        
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("UPDATE users SET password_hash = %s WHERE user_id = %s", (password_hash, user_id))
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-        st.success(f"Password reset for {email} to: {new_password}")
-    except Exception as e:
-        st.error(f"Failed: {e}")
-
-def activate_subscription(user_id):
-    """Activate subscription for 30 days."""
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE users 
-            SET subscription_status = 'active',
-                subscription_end = %s
-            WHERE user_id = %s
-        """, (datetime.now() + timedelta(days=30), user_id))
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-        st.success("✅ Subscription activated for 30 days")
-    except Exception as e:
-        st.error(f"Failed: {e}")
-
-def deactivate_subscription(user_id):
-    """Deactivate subscription."""
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE users 
-            SET subscription_status = 'inactive'
-            WHERE user_id = %s
-        """, (user_id,))
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-        st.success("✅ Subscription deactivated")
-    except Exception as e:
-        st.error(f"Failed: {e}")
-
-def show_subscription_management():
-    """Subscription management interface."""
-    st.header("💳 Subscription Management")
-    
-    try:
-        conn = get_connection()
-        cur = conn.cursor(cursor_factory=DictCursor)
-        
-        # Stats
-        col1, col2, col3 = st.columns(3)
-        
-        cur.execute("SELECT COUNT(*) as count FROM users WHERE subscription_status = 'active' AND subscription_end > NOW()")
-        active_count = cur.fetchone()['count']
-        
-        with col1:
-            st.metric("Active Subscriptions", active_count)
-        
-        cur.execute("SELECT COUNT(*) as count FROM users WHERE subscription_status = 'active' AND subscription_end < NOW()")
-        expired_count = cur.fetchone()['count']
-        
-        with col2:
-            st.metric("Expired", expired_count)
-        
-        cur.execute("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE status = 'completed' AND created_at > NOW() - INTERVAL '30 days'")
-        monthly_revenue = cur.fetchone()['total']
-        
-        with col3:
-            st.metric("Last 30 Days", f"£{monthly_revenue:.2f}")
-        
-        # Active subscriptions
-        st.subheader("Active Subscriptions")
-        
-        cur.execute("""
-            SELECT email, full_name, subscription_end
-            FROM users
-            WHERE subscription_status = 'active'
-            ORDER BY subscription_end ASC
-            LIMIT 20
-        """)
-        
-        active_subs = cur.fetchall()
-        
-        if active_subs:
-            df = pd.DataFrame(active_subs)
-            st.dataframe(df, use_container_width=True)
-        
-        # Recent payments
-        st.subheader("Recent Payments")
-        
-        cur.execute("""
-            SELECT p.created_at, u.email, p.amount, p.status
-            FROM payments p
-            JOIN users u ON p.user_id = u.user_id
-            ORDER BY p.created_at DESC
-            LIMIT 20
-        """)
-        
-        payments = cur.fetchall()
-        
-        if payments:
-            df = pd.DataFrame(payments)
-            st.dataframe(df, use_container_width=True)
-        
-        cur.close()
-        conn.close()
-        
-    except Exception as e:
-        st.error(f"Database error: {e}")
-
-def show_analytics():
-    """Show analytics and usage stats."""
-    st.header("📈 Analytics")
-    
-    try:
-        conn = get_connection()
-        cur = conn.cursor(cursor_factory=DictCursor)
-        
-        # Stats
-        col1, col2, col3 = st.columns(3)
-        
-        cur.execute("SELECT COUNT(*) as count FROM analyses")
-        total_analyses = cur.fetchone()['count']
-        
-        with col1:
-            st.metric("Total Analyses", total_analyses)
-        
-        cur.execute("SELECT COUNT(*) as count FROM analyses WHERE created_at > NOW() - INTERVAL '7 days'")
-        recent_analyses = cur.fetchone()['count']
-        
-        with col2:
-            st.metric("Last 7 Days", recent_analyses)
-        
-        cur.execute("SELECT COUNT(DISTINCT user_id) as count FROM analyses")
-        active_users = cur.fetchone()['count']
-        
-        with col3:
-            st.metric("Users with Analyses", active_users)
-        
-        # User growth
-        st.subheader("User Growth (Last 30 Days)")
-        
-        cur.execute("""
-            SELECT DATE(created_at) as date, COUNT(*) as new_users
-            FROM users
-            WHERE created_at > NOW() - INTERVAL '30 days'
-            GROUP BY DATE(created_at)
-            ORDER BY date
-        """)
-        
-        growth_data = cur.fetchall()
-        
-        if growth_data:
-            df = pd.DataFrame(growth_data)
-            st.line_chart(df.set_index('date')['new_users'])
-        
-        cur.close()
-        conn.close()
-        
-    except Exception as e:
-        st.error(f"Database error: {e}")
-
-def show_database_tools():
-    """Database maintenance tools."""
-    st.header("🔧 Database Tools")
-    
-    # Test connection
-    if st.button("Test Database Connection"):
-        try:
-            conn = get_connection()
-            cur = conn.cursor()
-            cur.execute("SELECT version()")
-            version = cur.fetchone()
-            st.success(f"✅ Connected! PostgreSQL {version[0]}")
-            cur.close()
-            conn.close()
-        except Exception as e:
-            st.error(f"❌ Connection failed: {e}")
-    
-    # Export
-    st.subheader("Data Export")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("Export Users CSV"):
+        # Test connection button
+        if st.button("Test Database Connection"):
             try:
-                conn = get_connection()
-                df = pd.read_sql("""
-                    SELECT email, full_name, subscription_status, subscription_end, created_at
-                    FROM users
-                    ORDER BY created_at DESC
-                """, conn)
+                conn = psycopg2.connect(
+                    dbname=st.secrets["DB_NAME"],
+                    user=st.secrets["DB_USER"],
+                    password=st.secrets["DB_PASSWORD"],
+                    host=st.secrets["DB_HOST"],
+                    port=st.secrets["DB_PORT"],
+                    sslmode='require'
+                )
+                cur = conn.cursor()
+                cur.execute("SELECT 1")
+                cur.close()
+                conn.close()
+                st.success("✅ Database connection successful!")
+            except Exception as e:
+                st.error(f"❌ Connection failed: {e}")
+        
+        # Simple stats
+        st.subheader("Quick Stats")
+        if st.button("Load Stats"):
+            col1, col2, col3 = st.columns(3)
+            
+            # Total users
+            try:
+                conn = psycopg2.connect(
+                    dbname=st.secrets["DB_NAME"],
+                    user=st.secrets["DB_USER"],
+                    password=st.secrets["DB_PASSWORD"],
+                    host=st.secrets["DB_HOST"],
+                    port=st.secrets["DB_PORT"],
+                    sslmode='require'
+                )
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM users")
+                count = cur.fetchone()[0]
+                cur.close()
+                conn.close()
+                with col1:
+                    st.metric("Total Users", count)
+            except Exception as e:
+                with col1:
+                    st.metric("Total Users", "Error")
+            
+            # Active subs
+            try:
+                conn = psycopg2.connect(
+                    dbname=st.secrets["DB_NAME"],
+                    user=st.secrets["DB_USER"],
+                    password=st.secrets["DB_PASSWORD"],
+                    host=st.secrets["DB_HOST"],
+                    port=st.secrets["DB_PORT"],
+                    sslmode='require'
+                )
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM users WHERE subscription_status = 'active'")
+                count = cur.fetchone()[0]
+                cur.close()
+                conn.close()
+                with col2:
+                    st.metric("Active Subs", count)
+            except Exception as e:
+                with col2:
+                    st.metric("Active Subs", "Error")
+            
+            # Total CVs
+            try:
+                conn = psycopg2.connect(
+                    dbname=st.secrets["DB_NAME"],
+                    user=st.secrets["DB_USER"],
+                    password=st.secrets["DB_PASSWORD"],
+                    host=st.secrets["DB_HOST"],
+                    port=st.secrets["DB_PORT"],
+                    sslmode='require'
+                )
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM cvs")
+                count = cur.fetchone()[0]
+                cur.close()
+                conn.close()
+                with col3:
+                    st.metric("Total CVs", count)
+            except Exception as e:
+                with col3:
+                    st.metric("Total CVs", "Error")
+    
+    with tab2:
+        st.header("User Management")
+        
+        # Search form
+        with st.form("user_search"):
+            email_search = st.text_input("Search by email")
+            submitted = st.form_submit_button("Search")
+            
+            if submitted:
+                try:
+                    conn = psycopg2.connect(
+                        dbname=st.secrets["DB_NAME"],
+                        user=st.secrets["DB_USER"],
+                        password=st.secrets["DB_PASSWORD"],
+                        host=st.secrets["DB_HOST"],
+                        port=st.secrets["DB_PORT"],
+                        sslmode='require'
+                    )
+                    cur = conn.cursor()
+                    
+                    if email_search:
+                        cur.execute(
+                            "SELECT user_id, email, full_name, subscription_status FROM users WHERE email ILIKE %s LIMIT 10",
+                            (f"%{email_search}%",)
+                        )
+                    else:
+                        cur.execute("SELECT user_id, email, full_name, subscription_status FROM users LIMIT 10")
+                    
+                    users = cur.fetchall()
+                    cur.close()
+                    conn.close()
+                    
+                    if users:
+                        for user in users:
+                            st.write(f"**{user[1]}** - {user[2] or 'No name'} - Status: {user[3] or 'Inactive'}")
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                if st.button(f"Activate Sub", key=f"act_{user[0]}"):
+                                    try:
+                                        conn = psycopg2.connect(
+                                            dbname=st.secrets["DB_NAME"],
+                                            user=st.secrets["DB_USER"],
+                                            password=st.secrets["DB_PASSWORD"],
+                                            host=st.secrets["DB_HOST"],
+                                            port=st.secrets["DB_PORT"],
+                                            sslmode='require'
+                                        )
+                                        cur = conn.cursor()
+                                        cur.execute(
+                                            "UPDATE users SET subscription_status = 'active', subscription_end = %s WHERE user_id = %s",
+                                            (datetime.now() + timedelta(days=30), user[0])
+                                        )
+                                        conn.commit()
+                                        cur.close()
+                                        conn.close()
+                                        st.success("Activated!")
+                                    except Exception as e:
+                                        st.error(f"Failed: {e}")
+                            
+                            with col2:
+                                if st.button(f"Reset Password", key=f"pwd_{user[0]}"):
+                                    new_pwd = "password123"
+                                    pwd_hash = bcrypt.hashpw(new_pwd.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                                    try:
+                                        conn = psycopg2.connect(
+                                            dbname=st.secrets["DB_NAME"],
+                                            user=st.secrets["DB_USER"],
+                                            password=st.secrets["DB_PASSWORD"],
+                                            host=st.secrets["DB_HOST"],
+                                            port=st.secrets["DB_PORT"],
+                                            sslmode='require'
+                                        )
+                                        cur = conn.cursor()
+                                        cur.execute(
+                                            "UPDATE users SET password_hash = %s WHERE user_id = %s",
+                                            (pwd_hash, user[0])
+                                        )
+                                        conn.commit()
+                                        cur.close()
+                                        conn.close()
+                                        st.success(f"Password: {new_pwd}")
+                                    except Exception as e:
+                                        st.error(f"Failed: {e}")
+                            
+                            st.divider()
+                    else:
+                        st.info("No users found")
+                        
+                except Exception as e:
+                    st.error(f"Search failed: {e}")
+    
+    with tab3:
+        st.header("Subscription Management")
+        
+        if st.button("Show Active Subscriptions"):
+            try:
+                conn = psycopg2.connect(
+                    dbname=st.secrets["DB_NAME"],
+                    user=st.secrets["DB_USER"],
+                    password=st.secrets["DB_PASSWORD"],
+                    host=st.secrets["DB_HOST"],
+                    port=st.secrets["DB_PORT"],
+                    sslmode='require'
+                )
+                query = """
+                    SELECT email, subscription_end 
+                    FROM users 
+                    WHERE subscription_status = 'active' 
+                    ORDER BY subscription_end 
+                    LIMIT 20
+                """
+                df = pd.read_sql(query, conn)
                 conn.close()
                 
-                csv = df.to_csv(index=False)
-                st.download_button(
-                    "Download Users",
-                    csv,
-                    f"users_{datetime.now().strftime('%Y%m%d')}.csv",
-                    "text/csv"
-                )
+                if not df.empty:
+                    st.dataframe(df)
+                else:
+                    st.info("No active subscriptions")
+                    
             except Exception as e:
-                st.error(f"Export failed: {e}")
-    
-    with col2:
-        if st.button("Export Payments CSV"):
-            try:
-                conn = get_connection()
-                df = pd.read_sql("""
-                    SELECT p.created_at, u.email, p.amount, p.status
-                    FROM payments p
-                    JOIN users u ON p.user_id = u.user_id
-                    ORDER BY p.created_at DESC
-                """, conn)
-                conn.close()
-                
-                csv = df.to_csv(index=False)
-                st.download_button(
-                    "Download Payments",
-                    csv,
-                    f"payments_{datetime.now().strftime('%Y%m%d')}.csv",
-                    "text/csv"
-                )
-            except Exception as e:
-                st.error(f"Export failed: {e}")
-    
-    # Maintenance
-    st.subheader("Maintenance")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
+                st.error(f"Failed to load: {e}")
+        
         if st.button("Update Expired Subscriptions"):
             try:
-                conn = get_connection()
+                conn = psycopg2.connect(
+                    dbname=st.secrets["DB_NAME"],
+                    user=st.secrets["DB_USER"],
+                    password=st.secrets["DB_PASSWORD"],
+                    host=st.secrets["DB_HOST"],
+                    port=st.secrets["DB_PORT"],
+                    sslmode='require'
+                )
                 cur = conn.cursor()
-                cur.execute("""
-                    UPDATE users 
-                    SET subscription_status = 'expired'
-                    WHERE subscription_status = 'active' 
-                    AND subscription_end < NOW()
-                """)
+                cur.execute(
+                    "UPDATE users SET subscription_status = 'expired' WHERE subscription_status = 'active' AND subscription_end < NOW()"
+                )
                 count = cur.rowcount
                 conn.commit()
                 cur.close()
@@ -475,23 +272,28 @@ def show_database_tools():
             except Exception as e:
                 st.error(f"Failed: {e}")
     
-    with col2:
-        if st.button("Clean Expired Tokens"):
-            try:
-                conn = get_connection()
-                cur = conn.cursor()
-                cur.execute("""
-                    UPDATE users 
-                    SET login_token = NULL, token_expires = NULL
-                    WHERE token_expires < NOW()
-                """)
-                count = cur.rowcount
-                conn.commit()
-                cur.close()
-                conn.close()
-                st.success(f"Cleaned {count} tokens")
-            except Exception as e:
-                st.error(f"Failed: {e}")
-
-if __name__ == "__main__":
-    main()
+    with tab4:
+        st.header("Database Tools")
+        
+        # Simple query runner
+        st.subheader("Run Query")
+        query = st.text_area("SQL Query (SELECT only)")
+        
+        if st.button("Execute"):
+            if query.strip().upper().startswith("SELECT"):
+                try:
+                    conn = psycopg2.connect(
+                        dbname=st.secrets["DB_NAME"],
+                        user=st.secrets["DB_USER"],
+                        password=st.secrets["DB_PASSWORD"],
+                        host=st.secrets["DB_HOST"],
+                        port=st.secrets["DB_PORT"],
+                        sslmode='require'
+                    )
+                    df = pd.read_sql(query, conn)
+                    conn.close()
+                    st.dataframe(df)
+                except Exception as e:
+                    st.error(f"Query failed: {e}")
+            else:
+                st.error("Only SELECT queries allowed")
