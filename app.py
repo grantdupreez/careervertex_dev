@@ -16,14 +16,44 @@ DEBUG = True
 def test_database_connection():
     """Test basic database connection."""
     try:
-        from core.database import DatabaseManager
-        db = DatabaseManager()
+        # First try direct connection like in test files
+        import psycopg2
+        print("Testing direct psycopg2 connection...")
         
-        # Test basic connection
-        result = db.execute("SELECT 1 as test")
-        if result and result[0]['test'] == 1:
-            return True, db
-        return False, None
+        test_conn = psycopg2.connect(
+            dbname=st.secrets["DB_NAME"],
+            user=st.secrets["DB_USER"],
+            password=st.secrets["DB_PASSWORD"],
+            host=st.secrets["DB_HOST"],
+            port=st.secrets["DB_PORT"],
+            sslmode='require'
+        )
+        
+        # Test query
+        cur = test_conn.cursor()
+        cur.execute("SELECT 1 as test")
+        result = cur.fetchone()
+        cur.close()
+        test_conn.close()
+        
+        if result and result[0] == 1:
+            print("Direct connection successful!")
+            
+            # Now test DatabaseManager
+            from core.database import DatabaseManager
+            db = DatabaseManager()
+            
+            # Test DatabaseManager query
+            result = db.execute("SELECT 1 as test")
+            if result and result[0]['test'] == 1:
+                return True, db
+            else:
+                print(f"DatabaseManager query failed: {result}")
+                return False, None
+        else:
+            print("Direct connection query failed")
+            return False, None
+            
     except Exception as e:
         print(f"Database connection test failed: {e}")
         # Show more detailed error in console
